@@ -2,8 +2,7 @@
 
 A web tool for the shop's photographs, in the house style. It runs entirely in the browser, so photos are never uploaded. It stands alone: nothing in it depends on any other tool.
 
-**Open it:** https://empiricalarmory.github.io/photo-style-generator/ (the old address, …/tuner/, forwards there)
-
+**Open it:** https://empiricalarmory.github.io/photo-style-generator/
 ## What it does
 
 Prints a batch of photos in Empirical Armory's inks with the toned colour, tuned part by part, with one set of settings for the whole batch.
