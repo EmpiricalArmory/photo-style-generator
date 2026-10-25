@@ -166,7 +166,7 @@ const makeItem = async (blob, name) => {
   };
 };
 const recordOf = (it) => ({
-  id: it.id, name: it.name, blob: it.blob, type: it.type, srcW: it.srcW, srcH: it.srcH, workW: it.workW, workH: it.workH,
+  id: it.id, rev: it.rev || 0, name: it.name, blob: it.blob, type: it.type, srcW: it.srcW, srcH: it.srcH, workW: it.workW, workH: it.workH,
   smallW: it.smallW, smallH: it.smallH, smallBlob: it.smallBlob, outName: it.outName, masksBlob: it.masksBlob,
   analysis: it.analysis, analysisSize: it.analysisSize, wbPick: it.wbPick, wbPickMed: it.wbPickMed,
   split: { status: it.split.status === 'done' || it.split.status === 'error' ? it.split.status : 'none', note: it.split.note, people: it.split.people },
@@ -174,8 +174,11 @@ const recordOf = (it) => ({
 const itemFromRecord = (r) => ({ ...r, split: { ...r.split }, ...mem() });
 let storeWarned = false;
 const storeFailed = (e) => { console.warn(e); if (!storeWarned) { storeWarned = true; status('This browser couldn’t keep the batch (its storage is full or blocked). Save a project to keep your work.', 'err'); } };
-const persist = (it) => { clearTimeout(it._pt); it._pt = setTimeout(() => { if (S.items.includes(it)) store.putItem(recordOf(it)).catch(storeFailed); }, 500); };
-const saveOrder = () => store.putMeta('order', S.items.map((i) => i.id)).catch(storeFailed);
+const persist = (it) => {
+  clearTimeout(it._pt);
+  it._pt = setTimeout(() => { if (!S.items.includes(it)) return; it.rev = (it.rev || 0) + 1; store.putItem(recordOf(it)).then(announce).catch(storeFailed); }, 500);
+};
+const saveOrder = () => store.putMeta('order', S.items.map((i) => i.id)).then(announce).catch(storeFailed);
 const saveCurrent = () => store.putMeta('current', S.cur ? S.cur.id : null).catch(() => {});
 
 const IMG_RE = /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif|tiff?)$/i;
@@ -538,16 +541,16 @@ const confirmDlg = (title, text, ok = 'Remove') => new Promise((res) => {
   d.returnValue = ''; d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true }); d.showModal();
 });
 const askRemove = async (it) => { if (await confirmDlg('Remove this photo?', `${it.name} and its parts leave the batch and this browser. The file on your computer isn’t touched.`)) removeItems([it]); };
-const removeItems = async (list) => {
+const removeItems = async (list, { fromSync = false } = {}) => {
   const idx = S.items.indexOf(S.cur), curGone = list.includes(S.cur);
   for (const it of list) {
     const i = S.items.indexOf(it); if (i < 0) continue;
     S.items.splice(i, 1); S.queue = S.queue.filter((x) => x !== it);
     if (it.els) { it.els.tile.remove(); it.els.thumb.remove(); it.els = null; }
     clearTimeout(it._pt); clearTimeout(it._ft);
-    store.deleteItem(it.id).catch(storeFailed);
+    if (!fromSync) store.deleteItem(it.id).then(announce).catch(storeFailed);
   }
-  saveOrder();
+  if (!fromSync) saveOrder();
   if (curGone) {
     editor.cancelPoly(); S.cur = null; S.E = null; S.token++;
     const next = S.items[Math.min(Math.max(0, idx), S.items.length - 1)];
@@ -1089,6 +1092,43 @@ const idbGet = (key) => new Promise((res) => {
     rq.onerror = () => res(null);
   } catch (e) { res(null); }
 });
+
+// ---------- other tabs with the tool open share one batch ----------
+// (the bookmark can open a second tab while one is open already)
+const TAB = newId(), chan = 'BroadcastChannel' in self ? new BroadcastChannel('ea-tuner') : null;
+function announce() { try { if (chan) chan.postMessage({ type: 'changed', tab: TAB }); } catch (e) { /* no channel */ } }
+let syncing = false, syncAgain = false;
+const syncFromStore = async () => {
+  if (syncing) { syncAgain = true; return; }
+  syncing = true;
+  try {
+    do {
+      syncAgain = false;
+      const recs = (await store.getItems()) || [], order = (await store.getMeta('order')) || [];
+      const byId = new Map(recs.map((r) => [r.id, r]));
+      const gone = S.items.filter((i) => !byId.has(i.id));
+      let changed = gone.length > 0;
+      if (gone.length) await removeItems(gone, { fromSync: true });
+      for (const it of S.items) { // changed elsewhere; the photo on screen here keeps its own edits
+        const r = byId.get(it.id);
+        if (!r || it === S.cur || (r.rev || 0) <= (it.rev || 0)) continue;
+        Object.assign(it, { masksBlob: r.masksBlob, analysis: r.analysis, analysisSize: r.analysisSize, split: { ...r.split }, outName: r.outName, wbPick: r.wbPick, wbPickMed: r.wbPickMed, rev: r.rev });
+        it.maskVersion++; it.smallMasks = null; it.overlaySmall = null; updateBadge(it); changed = true;
+      }
+      for (const r of recs) if (!S.items.some((i) => i.id === r.id)) { const it = itemFromRecord(r); S.items.push(it); buildItemEls(it); changed = true; }
+      if (changed) {
+        const pos = (id) => { const i = order.indexOf(id); return i < 0 ? 1e9 : i; };
+        S.items.sort((a, b) => pos(a.id) - pos(b.id));
+        for (const it of S.items) if (it.els) { $('#grid').appendChild(it.els.tile); $('#film').appendChild(it.els.thumb); }
+        updateBatchUI(); schedulePreviews();
+        if (!S.cur && S.items.length) await activate(S.items[0]);
+        if (!S.queueRunning) status(`The batch changed in another tab: ${plural(S.items.length, 'photo')} now.`);
+      }
+    } while (syncAgain);
+  } catch (e) { console.warn('Couldn’t follow the other tab', e); }
+  finally { syncing = false; }
+};
+if (chan) chan.onmessage = (e) => { if (e.data && e.data.type === 'changed' && e.data.tab !== TAB) restored.then(syncFromStore); };
 
 // ---------- the batch from last time ----------
 const restoreBatch = async () => {
