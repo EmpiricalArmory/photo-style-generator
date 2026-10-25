@@ -14,7 +14,7 @@
 </head>
 <body>
 <header class="top">
-  <div class="title"><a class="home" href="../">Empirical Armory</a><h1>Tuned by part</h1></div>
+  <div class="title"><span class="home">Empirical Armory</span><h1>Tuned by part</h1></div>
   <div class="file">
     <label class="btn" title="Add photos (or drop them on the page, a folder too)">Add photos<input type="file" id="fileInput" accept="image/*" multiple hidden></label>
     <button class="btn" id="btnSamples" type="button">Samples</button>
@@ -36,8 +36,9 @@
         <button type="button" data-v="result" aria-pressed="true" title="The printed result (R)">Result</button>
         <button type="button" data-v="compare" aria-pressed="false" title="The original and the result either side of a line you drag (V)">Compare</button>
         <button type="button" data-v="parts" aria-pressed="false" title="The parts over the photo, each in its own colour (P)">Parts</button>
-        <button type="button" data-v="original" aria-pressed="false" title="The photo as it came (O; or hold \ for a moment)">Original</button>
+        <button type="button" data-v="original" aria-pressed="false" title="The photo as it came (O)">Original</button>
       </div>
+      <button type="button" class="holdbtn" id="btnHold" aria-pressed="false" title="Hold this, or hold the \ key, to see the original for as long as you hold">Hold \ to compare</button>
       <div class="nav" id="nav" hidden>
         <button class="btn small" type="button" id="navPrev" aria-label="Previous photo" title="Previous photo (←)">‹</button>
         <span class="pos" id="navPos">1 of 1</span>

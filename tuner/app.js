@@ -6,8 +6,8 @@ import { defaultParams, STRENGTHS, STRENGTH_LABELS, MIXES, applyMix, matchMix, c
 import { GLRenderer } from './gl.js';
 import { Editor, softenMask, paintOverlay } from './editor.js';
 import { PARTS, PART } from './parts.js';
-import { autoSplit, SmartSelect, skinWithin } from '../shared/segment.js';
-import { drawScaled, toU8, toF32, srgb255ToLab, hexToRgb } from '../shared/imgproc.js';
+import { autoSplit, SmartSelect, skinWithin } from '../lib/segment.js';
+import { drawScaled, toU8, toF32, srgb255ToLab, hexToRgb } from '../lib/imgproc.js';
 import { renderPrint, maskCanvases } from './print.js';
 import { makeZip, readZip } from './zip.js';
 import * as store from './store.js';
@@ -193,7 +193,7 @@ const saveCurrent = () => store.putMeta('current', S.cur ? S.cur.id : null).catc
 
 const IMG_RE = /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif|tiff?)$/i;
 const isImage = (b, name) => (b.type && b.type.startsWith('image/')) || IMG_RE.test(name || '');
-const addPhotos = async (list, { gearMask = null, open = true } = {}) => {
+const addPhotos = async (list, { open = true } = {}) => {
   const files = list.filter((f) => f && f.blob && isImage(f.blob, f.name));
   if (!files.length) { if (list.length) status('Those files aren’t photos.', 'err'); return []; }
   // parts maps among them: named after a photo here or in the batch, with -mask, -parts or -map (gloves-mask.png for
@@ -208,7 +208,6 @@ const addPhotos = async (list, { gearMask = null, open = true } = {}) => {
     status(photos.length > 1 ? `Adding ${k + 1} of ${photos.length}: ${f.name}…` : `Opening ${f.name}…`, 'busy');
     try {
       const it = await makeItem(f.blob, f.name);
-      if (gearMask) it.pendingGear = gearMask;
       S.items.push(it); added.push(it); buildItemEls(it); persist(it);
     } catch (e) { console.error(e); status(`${f.name} couldn’t be opened as a photo${e.message ? ' (' + e.message + ')' : ''}.`, 'err'); await new Promise((r) => setTimeout(r, 1200)); }
     await yieldToPage();
@@ -257,7 +256,6 @@ const activate = async (it) => {
     $('#origCanvas').getContext('2d').drawImage(work, 0, 0);
     document.body.classList.add('has-photo');
     rebuild('all'); editor.drawOverlay(); editor.updateLayers(); editor.onHistory();
-    applyPendingGear(it);
     showPhotoUI(); saveCurrent(); selectEls(it);
     if (!S.queueRunning) status(`${it.name}: ${it.srcW} × ${it.srcH} px${S.items.length > 1 ? ` (${S.items.indexOf(it) + 1} of ${S.items.length})` : ''}.`);
     schedulePreviews(300);
@@ -356,7 +354,6 @@ const splitItem = async (it) => {
     if (onScreen) { E = S.E; work = S.work; res = await autoSplit(E, work, { onProgress, smart: S.smart, smartKey: S.imageKey }); }
     else { ({ E, work } = await workingState(it)); res = await autoSplit(E, work, { onProgress, smart: S.queueSmart, smartKey: 'q' + (++S.qkey) }); }
     const masks = { G: toU8(res.G), P: toU8(res.P), S: toU8(res.S), ST: new Uint8Array(E.n), F: toU8(res.F) };
-    if (it.pendingGear) { mergeGear(masks, it.pendingGear, it.workW, it.workH); delete it.pendingGear; }
     it.split = { status: 'done', note: noteFor(res), people: res.boxes.length };
     it.autoBlob = await store.packMasks(masks, E.n); // kept: a parts map's unpainted areas can take them
     if (it.map) { // the map decides; the split fills only what it leaves unpainted (if that's chosen)
@@ -377,21 +374,6 @@ const splitItem = async (it) => {
   }
   updateBadge(it); if (it === S.cur) showSplitNote(); persist(it);
 };
-// a product mask handed over by the scene generator (the exact product pixels) replaces the split's product
-const mergeGear = (m, gm, w, h) => {
-  const c = canvasOf(gm.w, gm.h), img = new ImageData(gm.w, gm.h);
-  for (let i = 0; i < gm.w * gm.h; i++) { const v = gm.data[i]; img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255; }
-  ctx2d(c).putImageData(img, 0, 0);
-  const d = ctx2d(drawScaled(c, gm.w, gm.h, w, h)).getImageData(0, 0, w, h).data;
-  for (let i = 0; i < w * h; i++) { m.G[i] = d[i * 4]; m.P[i] = Math.round(m.P[i] * (1 - m.G[i] / 255)); }
-};
-const applyPendingGear = (it) => {
-  if (!it.pendingGear || S.autoSplit || it !== S.cur || !S.E) return;
-  const m = { G: new Uint8Array(S.E.n), P: Uint8Array.from(S.E.masks.P) };
-  mergeGear(m, it.pendingGear, it.workW, it.workH); delete it.pendingGear;
-  editor.setMasks({ G: m.G, P: m.P }, 'The generator’s product');
-};
-
 // ---------- parts maps: a photo's parts painted by you, in colours of your own ----------
 const PART_NAMES = Object.fromEntries(PARTS.map((p) => [p.id, p.label]));
 const mapColours = (it, n) => (it.map.colours || []).map((c) => { const rgb = hexToRgb(c.hex); return { rgb, hex: c.hex, lab: srgb255ToLab(rgb), share: c.share, count: c.share * n }; });
@@ -1268,8 +1250,22 @@ $('#zoomIn').addEventListener('click', () => editor.zoomTo(editor.scale * 1.25))
 $('#zoomOut').addEventListener('click', () => editor.zoomTo(editor.scale / 1.25));
 $('#zoomFit').addEventListener('click', () => editor.fit());
 $('#zoom100').addEventListener('click', () => editor.zoomTo(1));
-const setHold = (on) => { if (editor.holdOriginal === on) return; editor.holdOriginal = on; editor.updateLayers(); editor.drawCursor(); if (S.view === 'grid' || S.items.length > 1) repaintAll(); };
+const setHold = (on) => {
+  if (editor.holdOriginal === on) return;
+  editor.holdOriginal = on; $('#btnHold').classList.toggle('on', on); $('#btnHold').setAttribute('aria-pressed', String(on));
+  editor.updateLayers(); editor.drawCursor(); if (S.view === 'grid' || S.items.length > 1) repaintAll();
+};
+// hold to compare: the original while the \ key (the key itself, whatever the keyboard calls it) or the chip is held.
+// It works with a dropdown or a button focused; only typing in a text field keeps the \ for itself
+const isHoldKey = (e) => e.key === '\\' || e.code === 'Backslash';
+const textEntry = (e) => e.target.tagName === 'TEXTAREA' || (e.target.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'color', 'button', 'file'].includes(e.target.type));
+const hb = $('#btnHold');
+hb.addEventListener('pointerdown', (e) => { e.preventDefault(); hb.setPointerCapture(e.pointerId); setHold(true); });
+for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) hb.addEventListener(ev, () => setHold(false));
+hb.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); setHold(true); } });
+hb.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.stopPropagation(); setHold(false); } });
 window.addEventListener('keydown', (e) => {
+  if (isHoldKey(e) && !e.metaKey && !e.ctrlKey && !textEntry(e) && !$('dialog[open]')) { e.preventDefault(); setHold(true); return; }
   if (typing(e) || $('dialog[open]')) return;
   const mod = e.metaKey || e.ctrlKey, k = e.key;
   if (editor.poly) {
@@ -1287,7 +1283,6 @@ window.addEventListener('keydown', (e) => {
   if (S.view === 'grid' && (k === 'ArrowUp' || k === 'ArrowDown') && !onControl) { e.preventDefault(); go((k === 'ArrowUp' ? -1 : 1) * gridCols()); return; }
   if (S.view === 'grid' && k === 'Enter' && !e.target.matches('button, a')) { setDisplay('one'); return; }
   if (k === ' ') { if (e.target.matches('button, a, input')) return; if (!editor.spaceDown) { editor.spaceDown = true; $('#viewport').classList.add('space'); editor.drawCursor(); } e.preventDefault(); return; }
-  if (k === '\\') { setHold(true); return; }
   if (k.toLowerCase() === 'g') { setDisplay(S.view === 'grid' ? 'one' : 'grid'); return; }
   const tools = { b: 'brush', l: 'lasso', c: 'click', h: 'hand' };
   if (tools[k.toLowerCase()]) { setTool(tools[k.toLowerCase()]); return; }
@@ -1303,19 +1298,9 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => {
   if (e.key === ' ') { editor.spaceDown = false; $('#viewport').classList.remove('space'); editor.drawCursor(); }
-  if (e.key === '\\') setHold(false);
+  if (isHoldKey(e)) setHold(false);
 });
 window.addEventListener('blur', () => { editor.spaceDown = false; setHold(false); $('#viewport').classList.remove('space'); });
-
-// ---------- hand-over from the scene generator (same site, via IndexedDB) ----------
-const idbGet = (key) => new Promise((res) => {
-  try {
-    const rq = indexedDB.open('ea-photo-tools', 1);
-    rq.onupgradeneeded = () => rq.result.createObjectStore('handoff');
-    rq.onsuccess = () => { try { const g = rq.result.transaction('handoff', 'readonly').objectStore('handoff').get(key); g.onsuccess = () => res(g.result || null); g.onerror = () => res(null); } catch (e) { res(null); } };
-    rq.onerror = () => res(null);
-  } catch (e) { res(null); }
-});
 
 // ---------- other tabs with the tool open share one batch ----------
 const TAB = newId(), chan = 'BroadcastChannel' in self ? new BroadcastChannel('ea-tuner') : null;
@@ -1377,7 +1362,4 @@ syncUI(); setTool('brush', false); setPart('gear', false);
 pressSeg($('#segDisplay'), S.view); pressSeg($('#segView'), S.show); editor.setView(S.show); $('#viewport').classList.toggle('wipe', S.show === 'compare');
 updateBatchUI(); showPhotoUI(); scheduleRender();
 restored = restoreBatch().catch((e) => console.error(e));
-restored.then(async () => {
-  if (location.hash.startsWith('#handoff')) { const h = await idbGet('tuner'); if (h && h.blob) addPhotos([{ blob: h.blob, name: h.name || 'generated.png' }], { gearMask: h.gearMask || null }); }
-});
 window.__tuner = { S, editor, gl, rebuild, addPhotos, activate, removeItems, exportCurrent, exportAll, renderFull, setDisplay, setShow, setTool, setPart, saveProject, openProject, queueSplit, runPreviews: () => runPreviews(), restored: () => restored, store, attachMap, removeMap, runMapQueue, reapplyMaps, showMapUI };

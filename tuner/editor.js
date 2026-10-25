@@ -2,7 +2,7 @@
 // click-to-select, a before-and-after wipe, and undo. Masks live in the engine state as Uint8 arrays (0..255):
 // G product, P person (generic gear and skin), S skin share of the person, ST steel share of the product.
 // The background is whatever is left.
-import { guided, guidedRect, boxMean } from '../shared/imgproc.js';
+import { guided, guidedRect, boxMean } from '../lib/imgproc.js';
 import { PARTS, PART } from './parts.js';
 
 // apply a value a (0..1) of the chosen part at pixel i, adding or erasing

@@ -3,20 +3,22 @@ body { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
 
 .top { display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; padding: 10px 18px; background: var(--sub); border-bottom: 1px solid var(--line); }
 .top .title { display: flex; align-items: baseline; gap: 14px; }
-.top .home { font: 500 16px var(--cabin); color: var(--faded); text-decoration: none; }
-.top .home:hover { color: var(--ink); text-decoration: underline; }
+.top .home { font: 500 16px var(--cabin); color: var(--faded); }
 .top h1 { font-size: 28px; line-height: 1.1; }
 .top .file { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* the photo area, a handle to drag, and the panel (its width is yours: --panel-w) */
 .app { display: grid; grid-template-columns: minmax(0, 1fr) 7px var(--panel-w, 392px); min-height: 0; }
 .viewer { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; min-width: 0; min-height: 0; }
-.viewtools { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--sub); }
-.viewtools .hold { color: var(--faded); }
+.viewtools { display: flex; align-items: center; gap: 8px 8px; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--sub); }
+.viewtools .holdbtn { font: 500 15px/1 var(--cabin); color: var(--faded); background: none; border: 1px dashed var(--line-strong); border-radius: 999px; padding: 7px 9px; cursor: pointer; user-select: none; touch-action: none; white-space: nowrap; }
+.viewtools .holdbtn:hover { color: var(--ink); border-color: var(--ink); }
+.viewtools .holdbtn.on { color: var(--sub); background: var(--ink); border: 1px solid var(--ink); }
+.viewtools .holdbtn:focus-visible { outline: 2px solid var(--verm); outline-offset: 2px; }
 .viewtools .nav { display: flex; align-items: center; gap: 6px; }
-.viewtools .nav .pos { min-width: 64px; text-align: center; color: var(--faded); font-variant-numeric: tabular-nums; }
+.viewtools .nav .pos { min-width: 50px; text-align: center; color: var(--faded); font-variant-numeric: tabular-nums; }
 .viewtools .zoom, .viewtools .gridtools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
-.viewtools .zv { min-width: 52px; text-align: right; color: var(--faded); font-variant-numeric: tabular-nums; }
+.viewtools .zv { min-width: 42px; text-align: right; color: var(--faded); font-variant-numeric: tabular-nums; }
 .viewtools .tsize { display: flex; align-items: center; gap: 8px; color: var(--faded); }
 .viewtools .tsize input { width: 140px; accent-color: var(--ink); }
 

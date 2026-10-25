@@ -2,7 +2,7 @@
 // painted, guesses which part each one is (or takes it from your colour key), and turns them into the parts.
 // What isn't painted (transparent, or left as the photo when the map was painted over a copy of it) is the
 // background, or is left to the auto split. Pure functions on typed arrays; the app does the drawing.
-import { srgb255ToLab, hexToRgb, rgbToHex, boxMean } from '../shared/imgproc.js';
+import { srgb255ToLab, hexToRgb, rgbToHex, boxMean } from '../lib/imgproc.js';
 
 // ---------- names: gloves-mask.png (or gloves_parts.png, gloves map.png…) is the map for gloves.jpg ----------
 export const baseName = (name) => String(name || '').split('/').pop().replace(/\.[a-z0-9]{2,5}$/i, '');

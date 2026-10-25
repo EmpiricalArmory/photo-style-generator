@@ -1,17 +1,16 @@
-# Empirical Armory · photo tools
+# Empirical Armory · Tuned by part
 
-Web tools for the shop's photographs, in the house style. Each runs entirely in the browser, so photos are never uploaded.
+A web tool for the shop's photographs, in the house style. It runs entirely in the browser, so photos are never uploaded. It stands alone: nothing in it depends on any other tool.
 
-**Open them:** https://empiricalarmory.github.io/photo-style-generator/
+**Open it:** https://empiricalarmory.github.io/photo-style-generator/tuner/ (the repository's own address opens it too)
 
-## Tuned by part
-
-https://empiricalarmory.github.io/photo-style-generator/tuner/
+## What it does
 
 Prints a batch of photos in Empirical Armory's inks with the toned colour, tuned part by part, with one set of settings for the whole batch.
 
 - **A batch, one set of settings.** Add as many photos as you like, or drop a folder. The inks, the colour by part and the background apply to every photo, so the batch comes out consistent. Each photo keeps its own parts, white balance and file name.
 - **Views.** One by one, with the batch in a strip below (‹ › or the arrow keys), or the whole batch as a grid with tiles from small to large. Each view shows the result, a before-and-after line you drag (Compare), the parts in their colours, or the original.
+- **Hold to compare.** Hold the `\` key, or hold "Hold \ to compare" in the toolbar, to see the original for as long as you hold, in any view.
 - **Inks (D116).** Fine ink is a clean duotone for the product. Story ink is the same duotone with the gravure grain, for people and places. Each ink has its own controls: black and white points, curve or contrast, grain and grain size, highlights to the substrate. You can also change the ink, paper and substrate colours.
 - **Toned colour (D121), by part.** Each part has its own colour in the tool, shown on its buttons and in the Parts view:
   - **Product** (red): the gear for sale.
@@ -48,17 +47,13 @@ The first split downloads 100 to 140 MB of models from Hugging Face, and the bro
 | X | Erase (or hold Alt) |
 | Enter, Backspace, Esc | Lasso: fill, take the last point back, cancel |
 | R, V, P, O | Result, compare, parts, original |
-| `\` (hold) | The original for a moment |
+| `\` (hold) | Compare: the original for as long as you hold |
 | ← and → | Previous and next photo |
 | G | One by one or grid |
 | F | Fit |
 | Space (hold) | Move the photo |
 | Cmd/Ctrl+Z | Undo |
 | Cmd/Ctrl+S | Save this photo |
-
-## Scene generator
-
-Next: your real product photo, with the place, the hands and the light generated around it, handed to Tuned by part.
 
 ## How it's built
 
@@ -73,9 +68,10 @@ Plain HTML, CSS and JavaScript modules, with no build step. GitHub Pages serves 
 - `tuner/app.js`: the interface, the batch, saving and projects.
 - `tuner/store.js`: the batch kept in the browser (IndexedDB), each photo's parts compressed.
 - `tuner/zip.js`: a small zip writer and reader for Save all and projects.
-- `shared/segment.js`: the auto split and click to select.
-- `shared/ml-worker.js` and `shared/models.js`: the models, run in a worker. If the graphics card fails, the worker is restarted on the processor.
-- `shared/imgproc.js`: filters, morphology, colour conversions, grain.
+- `lib/segment.js`: the auto split and click to select.
+- `lib/ml-worker.js` and `lib/models.js`: the models, run in a worker. If the graphics card fails, the worker is restarted on the processor.
+- `lib/imgproc.js`: filters, morphology, colour conversions, grain.
+- `index.html` at the root: opens the tool.
 
 The engine follows the recipes in the project's decisions doc (24 Oct 2026, D116 and D121) number for number.
 

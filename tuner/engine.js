@@ -1,7 +1,7 @@
 // The tuner's engine: the two inks (D116), the toned colour laid back in (D121), and the colour tuned part by part.
 // This file holds the analysis that runs once per photo or per edit, and a CPU renderer that mirrors the GPU shader
 // (gl.js) exactly, used as the reference in tests and as the fallback where WebGL 2 is missing.
-import { INK, CREAM, SUB, hexToRgb, lin8, linToLab, labToSrgb255, sm, clamp01, boxMean, histogram, histPercentile, grainNoiseAt, srgbToLinear } from '../shared/imgproc.js';
+import { INK, CREAM, SUB, hexToRgb, lin8, linToLab, labToSrgb255, sm, clamp01, boxMean, histogram, histPercentile, grainNoiseAt, srgbToLinear } from '../lib/imgproc.js';
 
 // colour strengths: k scales the photo's chroma, cools (greens to purples) are scaled further by `cool`,
 // and the strongest colours roll off with a soft knee (0 = no knee)
