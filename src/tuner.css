@@ -38,6 +38,8 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .viewport.tool-brush { cursor: none; }
 .viewport.wipe { cursor: ew-resize; }
 .viewport.dragover, .grid.dragover { box-shadow: inset 0 0 0 3px var(--verm); }
+/* with no photo there's nothing to paint or compare: the ordinary pointer (the links keep their hand) */
+body:not(.has-photo) .viewport, .viewport.nophoto { cursor: default; }
 .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; box-shadow: 0 0 0 1px rgba(31, 27, 22, 0.18), 0 6px 24px rgba(31, 27, 22, 0.12); }
 .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .stage.pixelated canvas { image-rendering: pixelated; }

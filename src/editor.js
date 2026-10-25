@@ -207,6 +207,7 @@ export class Editor {
     }, { passive: false });
     vp.addEventListener('pointerdown', (e) => this.down(e));
     vp.addEventListener('pointermove', (e) => this.move(e));
+    vp.addEventListener('pointerenter', () => this.markPhoto());
     vp.addEventListener('pointerup', (e) => this.up(e));
     vp.addEventListener('pointercancel', (e) => this.up(e));
     vp.addEventListener('dblclick', () => { if (this.tool === 'lasso' && this.poly && this.view !== 'compare') this.closePoly(); });
@@ -257,7 +258,11 @@ export class Editor {
     }
   }
   setWipe(f) { this.wipe = Math.max(0, Math.min(1, f)); this.updateLayers(); this.drawCursor(); }
+  // the viewport says whether there's a photo, so the tools' cursors (the brush's is drawn, not the system's) only
+  // show with one
+  markPhoto() { const none = !this.getState(); if (none !== this.noPhoto) { this.noPhoto = none; this.viewport.classList.toggle('nophoto', none); } }
   move(e) {
+    this.markPhoto();
     const [x, y] = this.toImage(e.clientX, e.clientY);
     this.hover = [e.clientX, e.clientY];
     const p = this.pointer;

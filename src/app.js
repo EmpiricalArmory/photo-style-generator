@@ -251,7 +251,7 @@ const activate = async (it) => {
     it.analysis = computeAnalysis(E, it.analysisSize === 'work' ? it.analysis.wbAutoMed : undefined); it.analysisSize = 'work';
     if (it.wbPick && !it.wbPickMed) it.wbPickMed = wbPickMed(E, it.wbPick);
     S.cur = it; S.E = E; S.work = work; S.lastF = F; S.imageKey++;
-    editor.setImageSize(w, h);
+    editor.setImageSize(w, h); editor.markPhoto();
     editor.undoStack = it.undo || []; editor.redoStack = it.redo || [];
     $('#origCanvas').getContext('2d').drawImage(work, 0, 0);
     document.body.classList.add('has-photo');
@@ -301,7 +301,7 @@ const showSplitNote = () => {
 };
 const clearView = () => {
   S.cur = null; S.E = null; S.work = null; S.lastF = null; S.token++;
-  document.body.classList.remove('has-photo');
+  document.body.classList.remove('has-photo'); editor.markPhoto();
   editor.undoStack = []; editor.redoStack = []; editor.onHistory(); editor.drawCursor();
   showPhotoUI(); saveCurrent();
 };
