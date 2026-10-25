@@ -1,7 +1,7 @@
 // The tuner's engine: the two inks (D116), the toned colour laid back in (D121), and the colour tuned part by part.
 // This file holds the analysis that runs once per photo or per edit, and a CPU renderer that mirrors the GPU shader
 // (gl.js) exactly, used as the reference in tests and as the fallback where WebGL 2 is missing.
-import { INK, CREAM, SUB, hexToRgb, lin8, linToLab, labToSrgb255, sm, clamp01, boxMean, percentile, grainNoise, srgbToLinear } from '../shared/imgproc.js';
+import { INK, CREAM, SUB, hexToRgb, lin8, linToLab, labToSrgb255, sm, clamp01, boxMean, histogram, histPercentile, grainNoiseAt, srgbToLinear } from '../shared/imgproc.js';
 
 // colour strengths: k scales the photo's chroma, cools (greens to purples) are scaled further by `cool`,
 // and the strongest colours roll off with a soft knee (0 = no knee)
@@ -18,9 +18,9 @@ export const PART_KEYS = ['place', 'gear', 'kit', 'skin'];
 const part = (name) => ({ preset: name, ...STRENGTHS[name] });
 export const MIXES = [
   { id: 'decided', label: 'As decided', note: 'toned everywhere (D121)', parts: { place: 'toned', gear: 'toned', kit: 'toned', skin: 'toned' }, fade: 0 },
-  { id: 'forward', label: 'Gear forward', note: 'the gear stronger, the rest quieter', parts: { place: 'quiet', gear: 'strong', kit: 'quiet', skin: 'toned' }, fade: 0 },
-  { id: 'stage', label: 'Quiet stage', note: 'the place faded, the kit in ink', parts: { place: 'quiet', gear: 'toned', kit: 'ink', skin: 'quiet' }, fade: 0.5 },
-  { id: 'only', label: 'Only what’s for sale', note: 'the gear in true colour, the rest ink', parts: { place: 'ink', gear: 'true', kit: 'ink', skin: 'ink' }, fade: 0 },
+  { id: 'forward', label: 'Product forward', note: 'the product stronger, the rest quieter', parts: { place: 'quiet', gear: 'strong', kit: 'quiet', skin: 'toned' }, fade: 0 },
+  { id: 'stage', label: 'Quiet stage', note: 'the background faded, the generic gear in ink', parts: { place: 'quiet', gear: 'toned', kit: 'ink', skin: 'quiet' }, fade: 0.5 },
+  { id: 'only', label: 'Only what’s for sale', note: 'the product in true colour, the rest in ink', parts: { place: 'ink', gear: 'true', kit: 'ink', skin: 'ink' }, fade: 0 },
 ];
 
 export const defaultParams = () => ({
@@ -58,29 +58,34 @@ export const createState = (rgba, w, h) => {
 };
 
 // white balance (D121 step 2): per-channel gains in linear light that take the median of the brightest near-neutral
-// pixels (saturation under 0.22, the top 3%) to grey; strength 1 goes all the way, 0.6 suits a warm room
+// pixels (saturation under 0.22, the top 3%) to grey; strength 1 goes all the way, 0.6 suits a warm room.
+// The medians are kept per photo, so the gains can be worked out again without the pixels (a batch).
+export const wbAutoMed = (E) => {
+  const cand = [], step = Math.max(1, Math.floor(E.n / 400000));
+  for (let i = 0; i < E.n; i += step) {
+    const j = i * 4, r = E.rgba[j] / 255, g = E.rgba[j + 1] / 255, b = E.rgba[j + 2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    if (mx < 0.06 || mx > 0.995) continue; // skip black and clipped
+    if ((mx - mn) / mx < 0.22) cand.push(i);
+  }
+  if (cand.length < 50) return null;
+  cand.sort((a, b) => E.Ly[b] - E.Ly[a]);
+  const top = cand.slice(0, Math.max(50, Math.floor(cand.length * 0.03)));
+  return [0, 1, 2].map((c) => { const v = top.map((i) => E.lin[i * 3 + c]).sort((a, b) => a - b); return v[v.length >> 1]; });
+};
+// the mean colour around a picked point (a grey card, a white sleeve)
+export const wbPickMed = (E, pick) => {
+  const [px, py] = pick, r = Math.max(2, Math.round(E.w / 400)); const s = [0, 0, 0]; let c = 0;
+  for (let y = Math.max(0, py - r); y <= Math.min(E.h - 1, py + r); y++) for (let x = Math.max(0, px - r); x <= Math.min(E.w - 1, px + r); x++) { const i = (y * E.w + x) * 3; s[0] += E.lin[i]; s[1] += E.lin[i + 1]; s[2] += E.lin[i + 2]; c++; }
+  return s.map((v) => v / Math.max(1, c));
+};
+export const gainsFromMed = (med, strength = 1) => {
+  if (!med) return [1, 1, 1];
+  const grey = (med[0] + med[1] + med[2]) / 3;
+  return med.map((m) => Math.max(0.5, Math.min(2, 1 + (grey / Math.max(m, 1e-4) - 1) * strength)));
+};
 export const computeGains = (E, wb) => {
   if (!wb || wb.mode === 'off') return [1, 1, 1];
-  let med;
-  if (wb.mode === 'pick' && wb.pick) {
-    const [px, py] = wb.pick, r = Math.max(2, Math.round(E.w / 400)); let s = [0, 0, 0], c = 0;
-    for (let y = Math.max(0, py - r); y <= Math.min(E.h - 1, py + r); y++) for (let x = Math.max(0, px - r); x <= Math.min(E.w - 1, px + r); x++) { const i = (y * E.w + x) * 3; s[0] += E.lin[i]; s[1] += E.lin[i + 1]; s[2] += E.lin[i + 2]; c++; }
-    med = s.map((v) => v / Math.max(1, c));
-  } else {
-    const cand = [];
-    const step = Math.max(1, Math.floor(E.n / 400000));
-    for (let i = 0; i < E.n; i += step) {
-      const j = i * 4, r = E.rgba[j] / 255, g = E.rgba[j + 1] / 255, b = E.rgba[j + 2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-      if (mx < 0.06 || mx > 0.995) continue; // skip black and clipped
-      if ((mx - mn) / mx < 0.22) cand.push(i);
-    }
-    if (cand.length < 50) return [1, 1, 1];
-    cand.sort((a, b) => E.Ly[b] - E.Ly[a]);
-    const top = cand.slice(0, Math.max(50, Math.floor(cand.length * 0.03)));
-    med = [0, 1, 2].map((c) => { const v = top.map((i) => E.lin[i * 3 + c]).sort((a, b) => a - b); return v[v.length >> 1]; });
-  }
-  const grey = (med[0] + med[1] + med[2]) / 3, s = wb.strength ?? 1;
-  return med.map((m) => Math.max(0.5, Math.min(2, 1 + (grey / Math.max(m, 1e-4) - 1) * s)));
+  return gainsFromMed(wb.mode === 'pick' && wb.pick ? wbPickMed(E, wb.pick) : wbAutoMed(E), wb.strength ?? 1);
 };
 
 export const computeLab = (E, gains) => {
@@ -90,19 +95,21 @@ export const computeLab = (E, gains) => {
   E.lab = lab; E.gains = gains;
 };
 
-export const ensureNoise = (E, sigma, seed = 11) => {
-  const key = `${E.w}x${E.h}:${sigma}:${seed}`;
-  if (E.noiseKey !== key) { E.noise = grainNoise(E.w, E.h, seed, sigma); E.noiseKey = key; }
+// story ink's grain, from each pixel's position (x0, y0: where this piece sits in the whole picture)
+export const ensureNoise = (E, sigma, seed = 11, x0 = 0, y0 = 0) => {
+  const key = `${E.w}x${E.h}:${sigma}:${seed}:${x0},${y0}`;
+  if (E.noiseKey !== key) { E.noise = grainNoiseAt(x0, y0, E.w, E.h, seed, sigma); E.noiseKey = key; }
 };
 
-// weights of the four parts: the gear wins, then skin, then kit; the place is the rest
+// weights of the four parts: the product wins, then skin, then generic gear; the background is the rest
 export const weightsAt = (G, P, S) => { const wp = G, wpers = P * (1 - wp), ws = wpers * S, wk = wpers - ws; return [wp, wk, ws, Math.max(0, 1 - wp - wpers)]; };
 
 // each part's own colour near its edges: the mean colour of its purest pixels nearby (weights^4, radius w/150),
 // so a part never takes on its neighbour's colour where they blend; also the foreground's own luminance near the
 // edge, used when the background is removed or refilled so no fringe of the old background is left
-export const computeDecon = (E) => {
-  const { w, h, n, masks, lab, Ly } = E, R = Math.max(2, Math.round(w / 150));
+export const deconRadius = (w) => Math.max(2, Math.round(w / 150));
+export const computeDecon = (E, R = deconRadius(E.w)) => { // R: from the whole picture's width when E is a tile of it
+  const { w, h, n, masks, lab, Ly } = E;
   const Wb = new Float32Array(n), Wp = new Float32Array(n), Wk = new Float32Array(n), Wf = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const [wp, wk, , wb] = weightsAt(masks.G[i] / 255, masks.P[i] / 255, masks.S[i] / 255);
@@ -122,18 +129,26 @@ export const computeDecon = (E) => {
   E.dec = { Mba, Mbb, Mpa, Mpb, Mka, Mkb, MLyF };
 };
 
-// the ink's black and white points, and the place's own level
-export const computeStats = (E, params) => {
-  const place = new Float32Array(E.n); let np = 0;
-  for (let i = 0; i < E.n; i++) { const [, , , wb] = weightsAt(E.masks.G[i] / 255, E.masks.P[i] / 255, E.masks.S[i] / 255); place[i] = wb >= 0.95 ? 1 : 0; np += place[i]; }
-  const f = params.ink.fine, s = params.ink.story;
-  const placeMed = np > E.n * 0.02 ? percentile(E.Ly, 50, place) : NaN;
-  let fineB = percentile(E.Ly, f.blackPct), fineW = f.whiteFromPlace && Number.isFinite(placeMed) ? placeMed : percentile(E.Ly, f.whitePct);
-  if (fineW - fineB < 0.01) fineW = Math.min(1, fineB + 0.01);
-  let storyW = percentile(E.Ly, s.whitePct), storyB = s.blackPct > 0 ? percentile(E.Ly, s.blackPct) : 0;
-  if (storyW - storyB < 0.01) storyW = Math.min(1, storyB + 0.01);
-  return { fineB, fineW, storyB, storyW, placeRef: Number.isFinite(placeMed) ? Math.max(0.05, placeMed) : Math.max(0.05, fineW), placeShare: np / E.n };
+// what a photo's levels are worked out from: the histogram of its luminance, and of its background alone (pixels at
+// least 95% background), plus the white balance medians. Kept per photo, so a batch needs no pixels to print previews
+export const computeLevels = (E) => {
+  const place = new Uint8Array(E.n); let np = 0;
+  for (let i = 0; i < E.n; i++) { const [, , , wb] = weightsAt(E.masks.G[i] / 255, E.masks.P[i] / 255, E.masks.S[i] / 255); if (wb >= 0.95) { place[i] = 1; np++; } }
+  return { n: E.n, nPlace: np, hist: histogram(E.Ly), histPlace: histogram(E.Ly, place) };
 };
+export const computeAnalysis = (E, wbMed) => ({ ...computeLevels(E), wbAutoMed: wbMed === undefined ? wbAutoMed(E) : wbMed });
+
+// the ink's black and white points, and the background's own level
+export const statsFrom = (A, params) => {
+  const f = params.ink.fine, s = params.ink.story;
+  const placeMed = A.nPlace > A.n * 0.02 ? histPercentile(A.histPlace, 50) : NaN;
+  let fineB = histPercentile(A.hist, f.blackPct), fineW = f.whiteFromPlace && Number.isFinite(placeMed) ? placeMed : histPercentile(A.hist, f.whitePct);
+  if (fineW - fineB < 0.01) fineW = Math.min(1, fineB + 0.01);
+  let storyW = histPercentile(A.hist, s.whitePct), storyB = s.blackPct > 0 ? histPercentile(A.hist, s.blackPct) : 0;
+  if (storyW - storyB < 0.01) storyW = Math.min(1, storyB + 0.01);
+  return { fineB, fineW, storyB, storyW, placeRef: Number.isFinite(placeMed) ? Math.max(0.05, placeMed) : Math.max(0.05, fineW), placeShare: A.nPlace / A.n };
+};
+export const computeStats = (E, params) => statsFrom(computeLevels(E), params);
 
 // numbers handed to the renderers
 export const makeUniforms = (params, stats) => {

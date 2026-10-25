@@ -137,8 +137,8 @@ export const skinWithin = (E, P) => {
   return guided(Ly, boxMean(S0, w, h, 1), w, h, Math.max(2, Math.round(w / 260)), 4e-3);
 };
 
-// the whole split: subject -> people (blob-like parts inside person boxes, completed with Segment Anything) -> gear
-// (the rest of the subject, and long thin parts such as blades held by people) -> skin (by colour, inside people)
+// the whole split: subject -> people (blob-like parts inside person boxes, completed with Segment Anything) -> the
+// product (the rest of the subject, and long thin parts such as blades held by people) -> skin (by colour, inside people)
 export const autoSplit = async (E, canvas, { onProgress, smart = null, smartKey = null } = {}) => {
   const { w, h, n, Ly } = E, notes = [];
   let F;
@@ -147,7 +147,7 @@ export const autoSplit = async (E, canvas, { onProgress, smart = null, smartKey 
   F = guided(Ly, F, w, h, Math.max(2, Math.round(Math.max(w, h) / 600)), 1e-3);
   let boxes = [];
   try { boxes = await findPeople(canvas, { onProgress }); }
-  catch (e) { console.warn('People detector failed', e); notes.push('People could not be found automatically; paint them as Kit.'); }
+  catch (e) { console.warn('People detector failed', e); notes.push('People could not be found automatically; paint them as Generic gear.'); }
   onProgress?.({ label: 'Splitting the parts', pct: null });
   await new Promise((r) => setTimeout(r, 0));
   const Fb = binarize(F, 0.5);
@@ -203,7 +203,7 @@ export const autoSplit = async (E, canvas, { onProgress, smart = null, smartKey 
     const rr = Math.max(2, Math.round(Math.max(w, h) / 500));
     P = guided(Ly, person, w, h, rr, 1e-3); G = guided(Ly, gear, w, h, rr, 2e-3);
     for (let i = 0; i < n; i++) { P[i] = Math.min(P[i], Math.max(F[i], person[i]) * 1.05); G[i] = Math.min(G[i], Math.max(F[i], gear[i]) * 1.05); }
-    notes.push(`${boxes.length} ${boxes.length === 1 ? 'person' : 'people'} found. Gear being worn counts as kit until you mark it as the gear.`);
+    notes.push(`${boxes.length} ${boxes.length === 1 ? 'person' : 'people'} found. Gear being worn counts as generic gear until you mark it as the product.`);
   }
   const S = skinWithin(E, P);
   return { G, P, S, F, boxes, notes };

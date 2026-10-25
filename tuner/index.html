@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tuned by part · Empirical Armory</title>
-<meta name="description" content="Print photos in Empirical Armory's inks with the toned colour, tuned part by part: the gear for sale, the kit, skin and the place behind.">
+<meta name="description" content="Print a batch of photos in Empirical Armory's inks with the toned colour, tuned part by part: the product, generic gear, skin and the background.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cabin:wght@400;500;600&family=IM+Fell+English&display=swap">
@@ -16,69 +16,90 @@
 <header class="top">
   <div class="title"><a class="home" href="../">Empirical Armory</a><h1>Tuned by part</h1></div>
   <div class="file">
-    <label class="btn" title="Open a photo (or drop one on the page)">Open photo<input type="file" id="fileInput" accept="image/*" hidden></label>
+    <label class="btn" title="Add photos (or drop them on the page, a folder too)">Add photos<input type="file" id="fileInput" accept="image/*" multiple hidden></label>
     <button class="btn" id="btnSamples" type="button">Samples</button>
-    <label class="btn" title="Open a .tuned.json project">Open project<input type="file" id="projInput" accept=".json,application/json" hidden></label>
-    <button class="btn" id="btnSaveProject" type="button" disabled>Save project</button>
-    <button class="btn primary" id="btnExport" type="button" disabled>Save image</button>
+    <label class="btn" title="Open a project (.tuned.zip, or an older .tuned.json)">Open project<input type="file" id="projInput" accept=".zip,.json,application/zip,application/json" hidden></label>
+    <button class="btn" id="btnSaveProject" type="button" disabled title="Save the batch: every photo, its parts and the settings">Save project</button>
+    <button class="btn" id="btnExportAll" type="button" hidden>Save all</button>
+    <button class="btn primary" id="btnExport" type="button" disabled title="Save this photo (Cmd/Ctrl+S)">Save image</button>
   </div>
 </header>
 
-<main class="app">
-  <section class="viewer" aria-label="Photo">
+<main class="app" id="app">
+  <section class="viewer" aria-label="Photos">
     <div class="viewtools">
-      <div class="seg" id="segView" role="group" aria-label="View">
-        <button type="button" data-v="result" aria-pressed="true" title="The printed result (R)">Result</button>
-        <button type="button" data-v="parts" aria-pressed="false" title="The parts over the photo (P)">Parts</button>
-        <button type="button" data-v="original" aria-pressed="false" title="The photo as it came (O)">Original</button>
+      <div class="seg" id="segDisplay" role="group" aria-label="Display">
+        <button type="button" data-v="one" aria-pressed="true" title="One photo at a time, with the batch below it (G)">One by one</button>
+        <button type="button" data-v="grid" aria-pressed="false" title="The whole batch as a grid (G)">Grid</button>
       </div>
-      <span class="hold" title="Hold the backslash key to see the original">Hold \ to compare</span>
-      <div class="zoom">
+      <div class="seg" id="segView" role="group" aria-label="Show">
+        <button type="button" data-v="result" aria-pressed="true" title="The printed result (R)">Result</button>
+        <button type="button" data-v="compare" aria-pressed="false" title="The original and the result either side of a line you drag (V)">Compare</button>
+        <button type="button" data-v="parts" aria-pressed="false" title="The parts over the photo, each in its own colour (P)">Parts</button>
+        <button type="button" data-v="original" aria-pressed="false" title="The photo as it came (O; or hold \ for a moment)">Original</button>
+      </div>
+      <div class="nav" id="nav" hidden>
+        <button class="btn small" type="button" id="navPrev" aria-label="Previous photo" title="Previous photo (←)">‹</button>
+        <span class="pos" id="navPos">1 of 1</span>
+        <button class="btn small" type="button" id="navNext" aria-label="Next photo" title="Next photo (→)">›</button>
+      </div>
+      <div class="zoom" id="zoomTools">
         <button class="btn small" type="button" id="zoomOut" aria-label="Zoom out">−</button>
         <button class="btn small" type="button" id="zoomFit" title="Fit (F)">Fit</button>
         <button class="btn small" type="button" id="zoom100" title="Actual pixels">100%</button>
         <button class="btn small" type="button" id="zoomIn" aria-label="Zoom in">+</button>
         <span class="zv" id="zoomVal">–</span>
       </div>
-    </div>
-    <div class="viewport" id="viewport" tabindex="0" aria-label="Photo canvas: drop a photo here">
-      <div class="stage" id="stage">
-        <canvas id="glCanvas"></canvas>
-        <canvas id="origCanvas"></canvas>
-        <canvas id="overlayCanvas"></canvas>
-      </div>
-      <canvas id="uiCanvas"></canvas>
-      <div class="empty" id="empty">
-        <h2>Drop a photo here</h2>
-        <p>or <label class="link">open one<input type="file" id="fileInput2" accept="image/*" hidden></label>, or try a <button type="button" class="link" id="btnSamples2">sample</button>.</p>
-        <p class="small">Everything happens in this browser: your photos are never uploaded.</p>
+      <div class="gridtools" id="gridTools" hidden>
+        <label class="tsize"><span>Size</span><input type="range" id="tileSize" min="110" max="560" step="10" value="220" aria-label="Tile size"></label>
+        <button class="btn small" type="button" id="btnRemoveAll">Remove all</button>
       </div>
     </div>
+    <div class="viewarea" id="viewarea">
+      <div class="viewport" id="viewport" tabindex="0" aria-label="Photo canvas: drop photos here">
+        <div class="stage" id="stage">
+          <canvas id="glCanvas"></canvas>
+          <canvas id="origCanvas"></canvas>
+          <canvas id="overlayCanvas"></canvas>
+        </div>
+        <canvas id="uiCanvas"></canvas>
+        <div class="empty" id="empty">
+          <h2>Drop photos here</h2>
+          <p>or <label class="link">add some<input type="file" id="fileInput2" accept="image/*" multiple hidden></label>, or try the <button type="button" class="link" id="btnSamples2">samples</button>.</p>
+          <p class="small">Add as many as you like: they print with one set of settings, each with its own parts.<br>Everything happens in this browser, and your photos stay in it until you remove them.</p>
+        </div>
+      </div>
+      <div class="grid" id="grid" hidden role="listbox" aria-label="The batch" tabindex="0"></div>
+      <div class="legend" id="legend" hidden aria-label="Parts colours"></div>
+    </div>
+    <div class="film" id="film" hidden role="listbox" aria-label="The batch"></div>
     <div class="status" id="status" role="status" aria-live="polite">Ready.</div>
   </section>
 
+  <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0" title="Drag to resize; double-click to reset"></div>
+
   <aside class="panel" id="panel" aria-label="Settings">
     <details class="sec" open>
-      <summary>Parts</summary>
+      <summary><span>Parts <span class="scope">this photo</span></span></summary>
       <div class="row">
-        <button class="btn primary" type="button" id="btnSplit" disabled>Split the photo</button>
-        <label class="chk"><input type="checkbox" id="chkAutoSplit" checked> Split each photo as it opens</label>
+        <button class="btn primary" type="button" id="btnSplit" disabled>Split this photo again</button>
+        <label class="chk"><input type="checkbox" id="chkAutoSplit" checked> Split each photo as it’s added</label>
       </div>
-      <p class="note" id="splitNote">The split finds the subject, the people and the gear. The first time, it downloads 100 to 140 MB of models, which your browser keeps for next time.</p>
+      <p class="note" id="splitNote">The split finds the subject, the people and the product. The first time, it downloads 100 to 140 MB of models, which your browser keeps for next time.</p>
       <div class="row" id="rowWhole" hidden>
         <span class="lab">The whole subject is</span>
-        <div class="btns"><button class="btn small" type="button" data-whole="gear">Gear</button><button class="btn small" type="button" data-whole="kit">Kit</button></div>
+        <div class="btns"><button class="btn small" type="button" data-whole="gear"><span class="dot" data-part="gear"></span>Product</button><button class="btn small" type="button" data-whole="kit"><span class="dot" data-part="kit"></span>Generic gear</button></div>
       </div>
       <div class="row">
         <span class="lab">Paint</span>
-        <div class="seg" id="segPart" role="group" aria-label="Part to paint"></div>
+        <div class="seg parts" id="segPart" role="group" aria-label="Part to paint"></div>
         <p class="hint" id="partHint"></p>
       </div>
       <div class="row">
         <span class="lab">Tool</span>
         <div class="seg" id="segTool" role="group" aria-label="Tool">
           <button type="button" data-v="brush" aria-pressed="true" title="Brush (B)">Brush</button>
-          <button type="button" data-v="lasso" aria-pressed="false" title="Lasso (L)">Lasso</button>
+          <button type="button" data-v="lasso" aria-pressed="false" title="Lasso, point by point (L)">Lasso</button>
           <button type="button" data-v="click" aria-pressed="false" title="Click an object to select it (C)">Click</button>
           <button type="button" data-v="hand" aria-pressed="false" title="Move the view (H, or hold Space)">Hand</button>
         </div>
@@ -104,7 +125,7 @@
     </details>
 
     <details class="sec" open>
-      <summary>Colour by part</summary>
+      <summary><span>Colour by part <span class="scope">every photo</span></span></summary>
       <div class="row">
         <span class="lab">Mixes</span>
         <div class="seg" id="segMix" role="group" aria-label="Mixes"></div>
@@ -119,13 +140,13 @@
     </details>
 
     <details class="sec">
-      <summary>Ink</summary>
+      <summary><span>Ink <span class="scope">every photo</span></span></summary>
       <div class="row">
         <div class="seg" id="segInk" role="group" aria-label="Ink">
           <button type="button" data-v="fine" aria-pressed="true">Fine ink</button>
           <button type="button" data-v="story" aria-pressed="false">Story ink</button>
         </div>
-        <p class="hint">Fine ink, a clean duotone, sells the gear. Story ink, with the gravure grain, tells people, places and the story (D116).</p>
+        <p class="hint">Fine ink, a clean duotone, sells the product. Story ink, with the gravure grain, tells people, places and the story (D116).</p>
       </div>
       <div class="grp" id="grpFine">
         <label class="sl"><span class="lab">Black point</span><input type="range" data-p="ink.fine.blackPct" min="0" max="5" step="0.1"><output></output></label>
@@ -160,40 +181,12 @@
           <button type="button" data-v="off" aria-pressed="false">Off</button>
         </div>
         <label class="sl"><span class="lab">Strength</span><input type="range" data-p="wb.strength" min="0" max="1" step="0.05"><output></output></label>
-        <p class="hint">Auto balances on the photo's brightest near-greys. In a warm room, 60% keeps some warmth (D121).</p>
+        <p class="hint" id="wbHint">Auto balances each photo on its own brightest near-greys. In a warm room, 60% keeps some warmth (D121).</p>
       </div>
-    </details>
-
-    <details class="sec">
-      <summary>Background</summary>
-      <div class="row">
-        <div class="seg" id="segBg" role="group" aria-label="Background">
-          <button type="button" data-v="keep" aria-pressed="true">Keep, printed</button>
-          <button type="button" data-v="transparent" aria-pressed="false">Transparent</button>
-          <button type="button" data-v="fill" aria-pressed="false">Fill</button>
-        </div>
-      </div>
-      <div class="grp" id="grpFill" hidden>
-        <span class="lab">Fill colour</span>
-        <div class="swatches" id="fillSwatches"></div>
-        <label class="sl"><span class="lab">Shadows kept</span><input type="range" data-p="bg.shadows" min="0" max="1" step="0.01"><output></output></label>
-        <p class="hint">Shadows kept lays the place's shading into the fill, so a shadow under the gear stays.</p>
-      </div>
-      <p class="hint" id="bgHint">The place prints in the ink with its own colour setting.</p>
     </details>
 
     <details class="sec" id="secExport">
-      <summary>Save image</summary>
-      <div class="row">
-        <span class="lab">Size</span>
-        <div class="radios" id="exportSize">
-          <label><input type="radio" name="es" value="work"> <span id="esWork">This size</span></label>
-          <label><input type="radio" name="es" value="long" checked> <span>Long side</span> <input type="number" id="esLong" value="2000" min="200" max="6000" step="50"> px</label>
-          <label><input type="radio" name="es" value="square"> <span>Square, the whole photo</span> <input type="number" id="esSquare" value="2000" min="200" max="6000" step="50"> px</label>
-          <label><input type="radio" name="es" value="frame"> <span>Square, framed on the subject</span></label>
-          <label class="sub">The subject fills <input type="number" id="esFramePct" value="70" min="30" max="95" step="1"> % of the square’s height (D117), at the square size above</label>
-        </div>
-      </div>
+      <summary><span>Save</span></summary>
       <div class="row">
         <span class="lab">Format</span>
         <div class="seg" id="segFormat" role="group" aria-label="Format">
@@ -201,22 +194,17 @@
           <button type="button" data-v="png" aria-pressed="false">PNG</button>
           <button type="button" data-v="webp" aria-pressed="false">WebP</button>
         </div>
-        <label class="sl" id="rowQuality"><span class="lab">Quality</span><input type="range" id="exportQ" min="50" max="100" step="1" value="85"><output id="exportQV">85</output></label>
-        <label class="field"><span class="lab">File name</span><input type="text" id="exportName" placeholder="gabriel-01-main" spellcheck="false"></label>
+        <label class="sl" id="rowQuality"><span class="lab">Quality</span><input type="range" id="exportQ" min="50" max="100" step="1" value="88"><output id="exportQV">88</output></label>
       </div>
-      <div class="row btns"><button class="btn primary" type="button" id="btnExport2" disabled>Save image</button></div>
-      <p class="hint">The ink is drawn at the size you save, so story ink's grain stays crisp. Transparent backgrounds save as PNG.</p>
-    </details>
-
-    <details class="sec">
-      <summary>About</summary>
-      <div class="row about">
-        <p>The inks are D116 and the toned colour D121, exactly as in the decisions doc; each part gets its own strength (Q60). Steel prints as ink.</p>
-        <p>The split runs on your machine: <a href="https://huggingface.co/onnx-community/ormbg-ONNX" target="_blank" rel="noopener">ormbg</a> (Apache-2.0) finds the subject, <a href="https://huggingface.co/Xenova/yolos-tiny" target="_blank" rel="noopener">YOLOS tiny</a> (Apache-2.0) finds people and <a href="https://huggingface.co/Xenova/slimsam-77-uniform" target="_blank" rel="noopener">SlimSAM</a> (Apache-2.0) selects what you click, through <a href="https://github.com/huggingface/transformers.js" target="_blank" rel="noopener">Transformers.js</a> and <a href="https://onnxruntime.ai/" target="_blank" rel="noopener">ONNX Runtime Web</a>.</p>
-        <p id="deviceInfo"></p>
-        <p>Shortcuts: B brush, L lasso, C click, H hand, 1–5 parts, [ and ] brush size, X erase, R / P / O views, \ hold to compare, F fit, Space to move, Cmd/Ctrl+Z undo.</p>
-        <p><a href="https://github.com/EmpiricalArmory/photo-style-generator" target="_blank" rel="noopener">The code on GitHub</a></p>
+      <div class="row">
+        <label class="field"><span class="lab">File name of this photo</span><input type="text" id="exportName" placeholder="gabriel-01-main" spellcheck="false"></label>
+        <p class="hint" id="saveSize">Each photo is saved at its own size.</p>
       </div>
+      <div class="row btns">
+        <button class="btn primary" type="button" id="btnExport2" disabled>Save this photo</button>
+        <button class="btn" type="button" id="btnExportAll2" hidden>Save all</button>
+      </div>
+      <p class="hint">The ink is drawn at full size, so story ink’s grain stays crisp. Transparent backgrounds save as PNG. Save all makes one .zip.</p>
     </details>
   </aside>
 </main>
@@ -224,8 +212,14 @@
 <dialog id="samplesDlg" aria-labelledby="samplesTitle">
   <form method="dialog" class="dlg">
     <div class="dlghead"><h2 id="samplesTitle">Samples</h2><button class="btn small" value="close">Close</button></div>
-    <p class="hint">Openly licensed stand-ins, to try the tool before your own photos.</p>
+    <p class="hint">Openly licensed stand-ins, to try the tool before your own photos. <button type="button" class="link" id="btnAllSamples">Add all five</button></p>
     <div class="samplegrid" id="sampleGrid"></div>
+    <div class="fromweb">
+      <h3>Photos from a web page</h3>
+      <p>To try the inks on photos from another site, drag this button to your browser’s bookmarks bar:</p>
+      <p><a class="btn" id="grabLink" href="#">Send photos to Tuned by part</a></p>
+      <p class="hint">Then, on a page with photos, click that bookmark, tick the photos you want and press Send. They open here and stay in this browser only; nothing is published. A site’s own photos are theirs: use them to compare, not on your pages.</p>
+    </div>
   </form>
 </dialog>
 
@@ -234,6 +228,14 @@
     <div class="dlghead"><h2 id="presetTitle">Save these settings</h2></div>
     <label class="field"><span class="lab">Name</span><input type="text" id="presetName" required placeholder="e.g. Gloves on paper"></label>
     <div class="btns end"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="save">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="confirmDlg" aria-labelledby="confirmTitle">
+  <form method="dialog" class="dlg small">
+    <div class="dlghead"><h2 id="confirmTitle">Remove?</h2></div>
+    <p id="confirmText"></p>
+    <div class="btns end"><button class="btn" value="cancel">Cancel</button><button class="btn primary" value="ok" id="confirmOk">Remove</button></div>
   </form>
 </dialog>
 

@@ -1,15 +1,9 @@
-// The tuner's viewport and part editing: zoom and pan, the parts overlay, brush, lasso and click-to-select,
-// and undo. Masks live in the engine state as Uint8 arrays (0..255): G gear, P person (kit and skin), S skin share of
-// the person, ST steel share of the gear. The place is whatever is left.
+// The tuner's viewport and part editing: zoom and pan, the parts overlay, brush, lasso (click by click) and
+// click-to-select, a before-and-after wipe, and undo. Masks live in the engine state as Uint8 arrays (0..255):
+// G product, P person (generic gear and skin), S skin share of the person, ST steel share of the product.
+// The background is whatever is left.
 import { guided, guidedRect, boxMean } from '../shared/imgproc.js';
-
-export const PARTS = [
-  { id: 'gear', label: 'Gear', key: '1', colour: [170, 54, 17], hint: 'The product for sale' },
-  { id: 'kit', label: 'Kit', key: '2', colour: [52, 92, 196], hint: 'Worn gear that isn’t for sale' },
-  { id: 'skin', label: 'Skin', key: '3', colour: [236, 178, 52], hint: 'Bare hands and wrists' },
-  { id: 'steel', label: 'Steel', key: '4', colour: [0, 150, 160], hint: 'Gear that prints as ink: blades, guards' },
-  { id: 'place', label: 'Place', key: '5', colour: null, hint: 'The background: paints the other parts away' },
-];
+import { PARTS, PART } from './parts.js';
 
 // apply a value a (0..1) of the chosen part at pixel i, adding or erasing
 const applyAt = (m, i, a, part, erase) => {
@@ -36,7 +30,7 @@ export class Editor {
     this.scale = 1; this.tx = 0; this.ty = 0;
     this.tool = 'brush'; this.part = 'gear'; this.size = 60; this.soft = 0.5; this.erase = false; this.snap = true;
     this.view = 'result'; this.opacity = 0.55; this.undoStack = []; this.redoStack = []; this.smart = null;
-    this.pointer = null; this.spaceDown = false; this.holdOriginal = false; this.picking = false;
+    this.pointer = null; this.poly = null; this.wipe = 0.5; this.spaceDown = false; this.holdOriginal = false; this.picking = false;
     this.octx = overlay.getContext('2d'); this.uctx = ui.getContext('2d');
     this.bind();
   }
@@ -45,13 +39,13 @@ export class Editor {
   setImageSize(w, h) {
     for (const c of [this.overlay, this.orig]) { c.width = w; c.height = h; }
     this.stage.style.width = w + 'px'; this.stage.style.height = h + 'px';
-    this.w = w; this.h = h; this.undoStack = []; this.redoStack = []; this.smart = null;
+    this.w = w; this.h = h; this.undoStack = []; this.redoStack = []; this.smart = null; this.poly = null; this.pointer = null;
     this.fit();
   }
   fit() {
     if (!this.w) return;
     // Keeps fitting on resize until the person zooms or pans. A hidden or collapsed viewport
-    // (a background tab, a closed side panel) has no size yet, so the fit waits for one.
+    // (a background tab, a closed side panel, the grid view) has no size yet, so the fit waits for one.
     this.autoFit = true;
     const r = this.viewport.getBoundingClientRect(), pad = 24;
     if (r.width < pad * 2 + 16 || r.height < pad * 2 + 16) return;
@@ -72,33 +66,26 @@ export class Editor {
     this.onZoom?.(this.scale);
     this.drawCursor();
   }
-  setView(v) { this.view = v; this.updateLayers(); }
+  setView(v) { this.view = v; this.updateLayers(); this.drawCursor(); }
   updateLayers() {
     const v = this.holdOriginal ? 'original' : this.view;
-    this.glCanvas.style.visibility = v === 'result' ? 'visible' : 'hidden';
+    this.glCanvas.style.visibility = v === 'result' || v === 'compare' ? 'visible' : 'hidden';
     this.orig.style.visibility = v === 'result' ? 'hidden' : 'visible';
+    this.orig.style.clipPath = v === 'compare' ? `inset(0 ${(100 - this.wipe * 100).toFixed(3)}% 0 0)` : '';
     this.overlay.style.visibility = v === 'parts' ? 'visible' : 'hidden';
-    this.overlay.style.opacity = 1;
   }
   toImage(clientX, clientY) {
     const r = this.viewport.getBoundingClientRect();
     return [(clientX - r.left - this.tx) / this.scale, (clientY - r.top - this.ty) / this.scale];
   }
 
-  // ---------- overlay ----------
+  // ---------- overlay: every part in its own colour, the background too ----------
   drawOverlay(x0 = 0, y0 = 0, x1 = this.w, y1 = this.h) {
     const E = this.getState(); if (!E) return;
     x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0)); x1 = Math.min(this.w, Math.ceil(x1)); y1 = Math.min(this.h, Math.ceil(y1));
     const bw = x1 - x0, bh = y1 - y0; if (bw <= 0 || bh <= 0) return;
-    const img = this.octx.createImageData(bw, bh), d = img.data, m = E.masks, op = this.opacity;
-    const cg = PARTS[0].colour, ck = PARTS[1].colour, cs = PARTS[2].colour, ct = PARTS[3].colour;
-    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
-      const i = (y0 + y) * this.w + x0 + x, j = (y * bw + x) * 4;
-      const g = m.G[i] / 255, p = m.P[i] / 255 * (1 - g), s = p * m.S[i] / 255, k = p - s, st = g * m.ST[i] / 255, gc = g - st;
-      const a = g + p; if (a < 0.004) { d[j + 3] = 0; continue; }
-      d[j] = (gc * cg[0] + st * ct[0] + k * ck[0] + s * cs[0]) / a; d[j + 1] = (gc * cg[1] + st * ct[1] + k * ck[1] + s * cs[1]) / a; d[j + 2] = (gc * cg[2] + st * ct[2] + k * ck[2] + s * cs[2]) / a;
-      d[j + 3] = 255 * Math.min(1, a) * op;
-    }
+    const img = this.octx.createImageData(bw, bh);
+    paintOverlay(img.data, E.masks, this.w, x0, y0, bw, bh, this.opacity);
     this.octx.putImageData(img, x0, y0);
   }
 
@@ -120,7 +107,7 @@ export class Editor {
     this.drawOverlay(entry.x0, entry.y0, entry.x1, entry.y1);
     this.onCommit?.({ x0: entry.x0, y0: entry.y0, x1: entry.x1, y1: entry.y1 });
   }
-  undo() { const e = this.undoStack.pop(); if (!e) return; this.restore(e, 'before'); this.redoStack.push(e); this.smart = null; this.onHistory?.(); }
+  undo() { if (this.poly) { this.undoPolyPoint(); return; } const e = this.undoStack.pop(); if (!e) return; this.restore(e, 'before'); this.redoStack.push(e); this.smart = null; this.onHistory?.(); }
   redo() { const e = this.redoStack.pop(); if (!e) return; this.restore(e, 'after'); this.undoStack.push(e); this.onHistory?.(); }
 
   // replace all masks at once (auto-split, clear), undoable
@@ -189,10 +176,29 @@ export class Editor {
     return x1 >= 0 ? { x0, y0, x1: x1 + 1, y1: y1 + 1 } : null;
   }
 
+  // ---------- the lasso, click by click ----------
+  nearFirst(clientX, clientY) {
+    if (!this.poly) return false;
+    const r = this.viewport.getBoundingClientRect(), [fx, fy] = this.poly.pts[0];
+    return Math.hypot(fx * this.scale + this.tx - (clientX - r.left), fy * this.scale + this.ty - (clientY - r.top)) <= 9;
+  }
+  closePoly() {
+    const p = this.poly; this.poly = null;
+    if (!p || p.pts.length < 3) { this.drawCursor(); return false; }
+    const before = this.snapshot(), saved = this.erase; this.erase = p.erase;
+    const box = this.fillPolygon(p.pts); this.erase = saved;
+    if (box) { this.snapBox(box, p.erase); this.pushUndo(before, box.x0 - 8, box.y0 - 8, box.x1 + 8, box.y1 + 8, 'Lasso'); this.drawOverlay(box.x0 - 8, box.y0 - 8, box.x1 + 8, box.y1 + 8); this.onCommit?.(box); }
+    this.drawCursor();
+    return true;
+  }
+  cancelPoly() { if (!this.poly) return false; this.poly = null; this.drawCursor(); return true; }
+  undoPolyPoint() { if (!this.poly) return false; this.poly.pts.pop(); if (!this.poly.pts.length) this.poly = null; this.drawCursor(); return true; }
+
   // ---------- pointer ----------
   bind() {
     const vp = this.viewport;
     vp.addEventListener('wheel', (e) => {
+      if (!this.getState()) return;
       e.preventDefault();
       const r = vp.getBoundingClientRect();
       if (e.ctrlKey || e.metaKey) this.zoomAt(Math.exp(-e.deltaY * 0.01), e.clientX - r.left, e.clientY - r.top);
@@ -203,6 +209,7 @@ export class Editor {
     vp.addEventListener('pointermove', (e) => this.move(e));
     vp.addEventListener('pointerup', (e) => this.up(e));
     vp.addEventListener('pointercancel', (e) => this.up(e));
+    vp.addEventListener('dblclick', () => { if (this.tool === 'lasso' && this.poly && this.view !== 'compare') this.closePoly(); });
     vp.addEventListener('pointerleave', () => { this.hover = null; this.drawCursor(); });
     vp.addEventListener('contextmenu', (e) => e.preventDefault());
     new ResizeObserver(() => {
@@ -220,6 +227,7 @@ export class Editor {
     if (this.panning(e)) { this.pointer = { mode: 'pan', sx: e.clientX, sy: e.clientY, tx: this.tx, ty: this.ty }; this.viewport.classList.add('grabbing'); return; }
     if (this.picking) { this.picking = false; this.viewport.classList.remove('picking'); this.onPick?.(Math.round(x), Math.round(y)); return; }
     if (e.button !== 0) return;
+    if (this.view === 'compare') { this.pointer = { mode: 'wipe' }; this.setWipe(x / this.w); return; }
     const erase = this.erase || e.altKey;
     if (this.tool === 'brush') {
       const savedErase = this.erase; this.erase = erase;
@@ -227,7 +235,10 @@ export class Editor {
       const nb = { x0: 1e9, y0: 1e9, x1: -1, y1: -1 }; this.dab(x, y, nb); this.mergeBox(this.pointer.box, nb);
       this.drawOverlay(nb.x0, nb.y0, nb.x1, nb.y1); this.onLive?.(nb);
     } else if (this.tool === 'lasso') {
-      this.pointer = { mode: 'lasso', pts: [[x, y]], erase };
+      if (!this.poly) { this.poly = { pts: [[x, y]], erase }; this.onStatus?.('Click to add points. Click the first point, double-click or press Enter to fill; Backspace takes the last point back; Esc cancels.'); }
+      else if (this.poly.pts.length >= 3 && this.nearFirst(e.clientX, e.clientY)) this.closePoly();
+      else this.poly.pts.push([x, y]);
+      this.drawCursor();
     } else if (this.tool === 'click') {
       if (x < 0 || y < 0 || x >= this.w || y >= this.h) return;
       const label = e.altKey ? 0 : 1;
@@ -245,16 +256,17 @@ export class Editor {
       } catch (err) { console.error(err); this.onStatus?.('Click to select could not run: ' + (err.message || err)); }
     }
   }
+  setWipe(f) { this.wipe = Math.max(0, Math.min(1, f)); this.updateLayers(); this.drawCursor(); }
   move(e) {
     const [x, y] = this.toImage(e.clientX, e.clientY);
     this.hover = [e.clientX, e.clientY];
     const p = this.pointer;
     if (p && p.mode === 'pan') { this.autoFit = false; this.tx = p.tx + e.clientX - p.sx; this.ty = p.ty + e.clientY - p.sy; this.applyTransform(); return; }
+    if (p && p.mode === 'wipe') { this.setWipe(x / this.w); return; }
     if (p && p.mode === 'brush') this.strokeTo(x, y);
-    else if (p && p.mode === 'lasso') { const last = p.pts[p.pts.length - 1]; if (Math.hypot(x - last[0], y - last[1]) * this.scale > 3) p.pts.push([x, y]); }
     this.drawCursor();
   }
-  up(e) {
+  up() {
     const p = this.pointer; this.pointer = null; this.viewport.classList.remove('grabbing');
     if (!p) return;
     if (p.mode === 'brush') {
@@ -265,27 +277,44 @@ export class Editor {
         this.drawOverlay(p.box.x0 - 8, p.box.y0 - 8, p.box.x1 + 8, p.box.y1 + 8);
         this.onCommit?.(p.box);
       }
-    } else if (p.mode === 'lasso') {
-      const before = this.snapshot(), saved = this.erase; this.erase = p.erase;
-      const box = this.fillPolygon(p.pts); this.erase = saved;
-      if (box) { this.snapBox(box, p.erase); this.pushUndo(before, box.x0 - 8, box.y0 - 8, box.x1 + 8, box.y1 + 8, 'Lasso'); this.drawOverlay(box.x0 - 8, box.y0 - 8, box.x1 + 8, box.y1 + 8); this.onCommit?.(box); }
     }
     this.drawCursor();
   }
-  partLabel() { return PARTS.find((q) => q.id === this.part).label; }
+  partLabel() { return PART[this.part].label; }
 
   drawCursor() {
     const g = this.uctx, dpr = devicePixelRatio; if (!g) return;
     g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, this.ui.width, this.ui.height);
+    if (!this.getState()) return;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     const r = this.viewport.getBoundingClientRect();
-    const p = this.pointer;
-    if (p && p.mode === 'lasso' && p.pts.length > 1) {
-      g.beginPath(); p.pts.forEach(([x, y], i) => { const sx = x * this.scale + this.tx, sy = y * this.scale + this.ty; i ? g.lineTo(sx, sy) : g.moveTo(sx, sy); });
-      g.closePath(); g.lineWidth = 3; g.strokeStyle = 'rgba(250,248,243,.9)'; g.stroke(); g.lineWidth = 1.5; g.setLineDash([6, 4]); g.strokeStyle = '#1F1B16'; g.stroke(); g.setLineDash([]);
-      g.fillStyle = 'rgba(170,54,17,.12)'; g.fill();
+    const S = (x, y) => [x * this.scale + this.tx, y * this.scale + this.ty];
+    if (this.view === 'compare' && !this.holdOriginal) {
+      const [sx] = S(this.wipe * this.w, 0), [, top] = S(0, 0), [, bot] = S(0, this.h);
+      g.beginPath(); g.moveTo(sx, top); g.lineTo(sx, bot); g.lineWidth = 3; g.strokeStyle = 'rgba(250,248,243,.9)'; g.stroke(); g.lineWidth = 1.5; g.strokeStyle = '#1F1B16'; g.stroke();
+      const cy = Math.max(top + 18, Math.min(bot - 18, r.height / 2));
+      g.beginPath(); g.arc(sx, cy, 14, 0, Math.PI * 2); g.fillStyle = '#FAF8F3'; g.fill(); g.lineWidth = 1.5; g.strokeStyle = '#1F1B16'; g.stroke();
+      g.beginPath(); g.moveTo(sx - 4, cy - 5); g.lineTo(sx - 8, cy); g.lineTo(sx - 4, cy + 5); g.moveTo(sx + 4, cy - 5); g.lineTo(sx + 8, cy); g.lineTo(sx + 4, cy + 5); g.stroke();
+      g.font = '500 13px Cabin, system-ui, sans-serif'; g.fillStyle = 'rgba(31,27,22,.75)';
+      g.textAlign = 'right'; g.fillText('Original', sx - 22, top + 18); g.textAlign = 'left'; g.fillText('Result', sx + 22, top + 18);
+      return;
     }
-    if (this.hover && this.tool === 'brush' && !this.spaceDown && !this.picking) {
+    const poly = this.poly;
+    if (poly && poly.pts.length) {
+      const pts = poly.pts.map(([x, y]) => S(x, y));
+      const hov = this.hover ? [this.hover[0] - r.left, this.hover[1] - r.top] : null;
+      const closing = hov && poly.pts.length >= 3 && this.nearFirst(this.hover[0], this.hover[1]);
+      g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+      if (hov && !this.spaceDown) g.lineTo(...(closing ? pts[0] : hov));
+      if (poly.pts.length >= 2) { g.fillStyle = poly.erase ? 'rgba(90,81,72,.14)' : `rgba(${PART[this.part].rgb.join(',')},.16)`; g.fill(); }
+      g.lineWidth = 3; g.strokeStyle = 'rgba(250,248,243,.9)'; g.stroke(); g.lineWidth = 1.5; g.setLineDash(poly.erase ? [5, 4] : []); g.strokeStyle = '#1F1B16'; g.stroke(); g.setLineDash([]);
+      pts.forEach(([x, y], i) => {
+        const s = i === 0 ? (closing ? 7 : 5) : 3;
+        g.fillStyle = i === 0 && closing ? PART[this.part].hex : '#FAF8F3'; g.strokeStyle = '#1F1B16'; g.lineWidth = 1.5;
+        g.fillRect(x - s, y - s, s * 2, s * 2); g.strokeRect(x - s, y - s, s * 2, s * 2);
+      });
+    }
+    if (this.hover && this.tool === 'brush' && !this.spaceDown && !this.picking && this.view !== 'compare') {
       const sx = this.hover[0] - r.left, sy = this.hover[1] - r.top, rad = (this.size / 2) * this.scale;
       g.beginPath(); g.arc(sx, sy, Math.max(2, rad), 0, Math.PI * 2); g.lineWidth = 3; g.strokeStyle = 'rgba(250,248,243,.85)'; g.stroke();
       g.lineWidth = 1.5; g.strokeStyle = this.erase ? '#5A5148' : '#1F1B16'; if (this.erase) g.setLineDash([4, 3]); g.stroke(); g.setLineDash([]);
@@ -293,6 +322,19 @@ export class Editor {
     }
   }
 }
+
+// the parts overlay into RGBA pixels (a region x0, y0, bw, bh of masks w wide), each part in its own colour
+export const paintOverlay = (d, m, w, x0, y0, bw, bh, op) => {
+  const cg = PART.gear.rgb, ck = PART.kit.rgb, cs = PART.skin.rgb, ct = PART.steel.rgb, cb = PART.place.rgb, A = Math.round(255 * op);
+  for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+    const i = (y0 + y) * w + x0 + x, j = (y * bw + x) * 4;
+    const g = m.G[i] / 255, p = (m.P[i] / 255) * (1 - g), s = (p * m.S[i]) / 255, k = p - s, st = (g * m.ST[i]) / 255, gc = g - st, b = Math.max(0, 1 - g - p);
+    d[j] = gc * cg[0] + st * ct[0] + k * ck[0] + s * cs[0] + b * cb[0];
+    d[j + 1] = gc * cg[1] + st * ct[1] + k * ck[1] + s * cs[1] + b * cb[1];
+    d[j + 2] = gc * cg[2] + st * ct[2] + k * ck[2] + s * cs[2] + b * cb[2];
+    d[j + 3] = A;
+  }
+};
 
 // a soft version of a hard mask, for click-to-select results: feathered a little and snapped to the photo
 export const softenMask = (E, m) => {
@@ -302,3 +344,5 @@ export const softenMask = (E, m) => {
   guidedRect(E.Ly, out, E.w, E.h, 0, 0, E.w, E.h, Math.max(2, r * 2), 1e-3);
   return out;
 };
+
+export { PARTS };

@@ -86,15 +86,22 @@ export const guidedRect = (I, p, w, h, x0, y0, x1, y1, r, eps) => {
   for (let y = m; y < sh - m; y++) for (let x = m; x < sw - m; x++) p[(y0 + y) * w + x0 + x] = q[y * sw + x];
 };
 
-// percentile of values in [0,1] (optionally only where mask >= 0.5), from a 4096-bin histogram
-export const percentile = (arr, p, mask) => {
-  const B = 4096, hist = new Uint32Array(B); let n = 0;
-  for (let i = 0; i < arr.length; i++) { if (mask && mask[i] < 0.5) continue; const v = arr[i]; hist[v <= 0 ? 0 : v >= 1 ? B - 1 : (v * (B - 1)) | 0]++; n++; }
+// percentiles of values in [0,1] from a 4096-bin histogram (optionally only where mask >= 0.5). The histogram can be
+// kept and asked again, so a photo's levels can be worked out without its pixels
+export const HIST_BINS = 4096;
+export const histogram = (arr, mask) => {
+  const B = HIST_BINS, hist = new Uint32Array(B);
+  for (let i = 0; i < arr.length; i++) { if (mask && mask[i] < 0.5) continue; const v = arr[i]; hist[v <= 0 ? 0 : v >= 1 ? B - 1 : (v * (B - 1)) | 0]++; }
+  return hist;
+};
+export const histPercentile = (hist, p) => {
+  let n = 0; for (let b = 0; b < hist.length; b++) n += hist[b];
   if (!n) return NaN;
   const target = (p / 100) * n; let acc = 0;
-  for (let b = 0; b < B; b++) { acc += hist[b]; if (acc >= target) return b / (B - 1); }
+  for (let b = 0; b < hist.length; b++) { acc += hist[b]; if (acc >= target) return b / (hist.length - 1); }
   return 1;
 };
+export const percentile = (arr, p, mask) => histPercentile(histogram(arr, mask), p);
 
 // seeded Gaussian noise, blurred with sigma (px) and scaled back to a standard deviation of 1
 export const grainNoise = (w, h, seed = 11, sigma = 0.7) => {
@@ -113,6 +120,30 @@ export const grainNoise = (w, h, seed = 11, sigma = 0.7) => {
   const sd = Math.sqrt(ss / n) || 1;
   for (let i = 0; i < n; i++) a[i] /= sd;
   return a;
+};
+
+// the same kind of grain, but taken from a hash of each pixel's position in the whole picture, so a tile of a large
+// photo (x0, y0, w, h) matches its neighbours exactly and any size can be printed in pieces; std 1 in expectation
+const mix32 = (x) => { x ^= x >>> 16; x = Math.imul(x, 0x7feb352d); x ^= x >>> 15; x = Math.imul(x, 0x846ca68b); x ^= x >>> 16; return x >>> 0; };
+export const grainNoiseAt = (x0, y0, w, h, seed = 11, sigma = 0.7) => {
+  const R = sigma > 0.05 ? Math.max(1, Math.ceil(sigma * 3)) : 0, W = w + 2 * R, H = h + 2 * R, raw = new Float32Array(W * H);
+  const s1 = mix32(seed | 0), s2 = mix32((seed | 0) ^ 0x9e3779b9);
+  for (let y = 0; y < H; y++) {
+    const gy = y0 + y - R, hy1 = mix32((gy | 0) + s1), hy2 = mix32((gy | 0) + s2);
+    for (let x = 0; x < W; x++) {
+      const gx = x0 + x - R;
+      const u = (mix32((gx | 0) + hy1) + 0.5) / 4294967296, v = (mix32((gx | 0) + hy2) + 0.5) / 4294967296;
+      raw[y * W + x] = Math.sqrt(-2 * Math.log(u)) * Math.cos(6.283185307 * v);
+    }
+  }
+  if (!R) return raw;
+  const k = []; let ks = 0;
+  for (let q = -R; q <= R; q++) { const v = Math.exp(-(q * q) / (2 * sigma * sigma)); k.push(v); ks += v; }
+  let k2 = 0; for (let q = 0; q < k.length; q++) { k[q] /= ks; k2 += k[q] * k[q]; }
+  const tmp = new Float32Array(W * h), out = new Float32Array(w * h), norm = 1 / k2; // unit variance after the 2D blur
+  for (let y = 0; y < h; y++) for (let x = 0; x < W; x++) { let v = 0; for (let q = 0; q < k.length; q++) v += k[q] * raw[(y + q) * W + x]; tmp[y * W + x] = v; }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let v = 0; for (let q = 0; q < k.length; q++) v += k[q] * tmp[y * W + x + q]; out[y * w + x] = v * norm; }
+  return out;
 };
 
 // binary morphology with square windows (fast, via box means)
