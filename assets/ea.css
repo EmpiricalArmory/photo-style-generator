@@ -1,0 +1,36 @@
+/* Empirical Armory house tokens, shared by the photo tools. Type follows D102: Fell only at 24px and above,
+   Cabin for reading (19px body, 16px small) and Medium for labels; no italics, letter-spacing or small caps. */
+:root {
+  --ink: #1F1B16;
+  --faded: #5A5148;
+  --paper: #E6DFCF;
+  --sub: #FAF8F3;
+  --toned: #D7CAB3;
+  --foxing: #C3A57F;
+  --verm: #AA3611;
+  --line: rgba(31, 27, 22, 0.16);
+  --line-strong: rgba(31, 27, 22, 0.32);
+  --fell: 'IM Fell English', Georgia, serif;
+  --cabin: Cabin, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--paper); color: var(--ink); font: 400 16px/1.45 var(--cabin); -webkit-font-smoothing: antialiased; }
+h1, h2, h3 { font-family: var(--fell); font-weight: 400; margin: 0; }
+p { margin: 0; }
+a { color: var(--ink); }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--verm); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: 500 16px/1.2 var(--cabin); border: 1px solid var(--ink); background: transparent; color: var(--ink); padding: 7px 14px; min-height: 38px; border-radius: 999px; cursor: pointer; white-space: nowrap; text-decoration: none; }
+.btn:hover { background: rgba(31, 27, 22, 0.06); }
+.btn.primary { background: var(--ink); color: var(--sub); }
+.btn.primary:hover { background: #3a332b; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn.small { min-height: 32px; padding: 4px 11px; }
+
+.seg { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.seg button { font: 500 16px/1.2 var(--cabin); border: 1px solid var(--line-strong); background: transparent; color: var(--ink); padding: 6px 12px; min-height: 36px; border-radius: 999px; cursor: pointer; }
+.seg button:hover { border-color: var(--ink); }
+.seg button[aria-pressed='true'] { background: var(--ink); color: var(--sub); border-color: var(--ink); }

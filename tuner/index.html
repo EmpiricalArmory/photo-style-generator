@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tuned by part · Empirical Armory</title>
+<meta name="description" content="Print photos in Empirical Armory's inks with the toned colour, tuned part by part: the gear for sale, the kit, skin and the place behind.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cabin:wght@400;500;600&family=IM+Fell+English&display=swap">
+<link rel="stylesheet" href="../assets/ea.css">
+<link rel="stylesheet" href="tuner.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231F1B16'/%3E%3Ccircle cx='16' cy='16' r='8' fill='%23E6DFCF'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="top">
+  <div class="title"><a class="home" href="../">Empirical Armory</a><h1>Tuned by part</h1></div>
+  <div class="file">
+    <label class="btn" title="Open a photo (or drop one on the page)">Open photo<input type="file" id="fileInput" accept="image/*" hidden></label>
+    <button class="btn" id="btnSamples" type="button">Samples</button>
+    <label class="btn" title="Open a .tuned.json project">Open project<input type="file" id="projInput" accept=".json,application/json" hidden></label>
+    <button class="btn" id="btnSaveProject" type="button" disabled>Save project</button>
+    <button class="btn primary" id="btnExport" type="button" disabled>Save image</button>
+  </div>
+</header>
+
+<main class="app">
+  <section class="viewer" aria-label="Photo">
+    <div class="viewtools">
+      <div class="seg" id="segView" role="group" aria-label="View">
+        <button type="button" data-v="result" aria-pressed="true" title="The printed result (R)">Result</button>
+        <button type="button" data-v="parts" aria-pressed="false" title="The parts over the photo (P)">Parts</button>
+        <button type="button" data-v="original" aria-pressed="false" title="The photo as it came (O)">Original</button>
+      </div>
+      <span class="hold" title="Hold the backslash key to see the original">Hold \ to compare</span>
+      <div class="zoom">
+        <button class="btn small" type="button" id="zoomOut" aria-label="Zoom out">−</button>
+        <button class="btn small" type="button" id="zoomFit" title="Fit (F)">Fit</button>
+        <button class="btn small" type="button" id="zoom100" title="Actual pixels">100%</button>
+        <button class="btn small" type="button" id="zoomIn" aria-label="Zoom in">+</button>
+        <span class="zv" id="zoomVal">–</span>
+      </div>
+    </div>
+    <div class="viewport" id="viewport" tabindex="0" aria-label="Photo canvas: drop a photo here">
+      <div class="stage" id="stage">
+        <canvas id="glCanvas"></canvas>
+        <canvas id="origCanvas"></canvas>
+        <canvas id="overlayCanvas"></canvas>
+      </div>
+      <canvas id="uiCanvas"></canvas>
+      <div class="empty" id="empty">
+        <h2>Drop a photo here</h2>
+        <p>or <label class="link">open one<input type="file" id="fileInput2" accept="image/*" hidden></label>, or try a <button type="button" class="link" id="btnSamples2">sample</button>.</p>
+        <p class="small">Everything happens in this browser: your photos are never uploaded.</p>
+      </div>
+    </div>
+    <div class="status" id="status" role="status" aria-live="polite">Ready.</div>
+  </section>
+
+  <aside class="panel" id="panel" aria-label="Settings">
+    <details class="sec" open>
+      <summary>Parts</summary>
+      <div class="row">
+        <button class="btn primary" type="button" id="btnSplit" disabled>Split the photo</button>
+        <label class="chk"><input type="checkbox" id="chkAutoSplit" checked> Split each photo as it opens</label>
+        <label class="chk"><input type="checkbox" id="chkHQ"> Finer edges (WebGPU only, a larger download)</label>
+      </div>
+      <p class="note" id="splitNote">The split finds the subject, people and the gear. The first time, it downloads about 55 MB of models, which your browser keeps for next time.</p>
+      <div class="row" id="rowWhole" hidden>
+        <span class="lab">The whole subject is</span>
+        <div class="btns"><button class="btn small" type="button" data-whole="gear">Gear</button><button class="btn small" type="button" data-whole="kit">Kit</button></div>
+      </div>
+      <div class="row">
+        <span class="lab">Paint</span>
+        <div class="seg" id="segPart" role="group" aria-label="Part to paint"></div>
+        <p class="hint" id="partHint"></p>
+      </div>
+      <div class="row">
+        <span class="lab">Tool</span>
+        <div class="seg" id="segTool" role="group" aria-label="Tool">
+          <button type="button" data-v="brush" aria-pressed="true" title="Brush (B)">Brush</button>
+          <button type="button" data-v="lasso" aria-pressed="false" title="Lasso (L)">Lasso</button>
+          <button type="button" data-v="click" aria-pressed="false" title="Click an object to select it (C)">Click</button>
+          <button type="button" data-v="hand" aria-pressed="false" title="Move the view (H, or hold Space)">Hand</button>
+        </div>
+        <p class="hint" id="toolHint"></p>
+      </div>
+      <div class="row" id="rowBrush">
+        <label class="sl"><span class="lab">Brush size</span><input type="range" id="brushSize" min="2" max="600" step="1" value="60"><output id="brushSizeV">60 px</output></label>
+        <label class="sl"><span class="lab">Softness</span><input type="range" id="brushSoft" min="0" max="100" step="1" value="50"><output id="brushSoftV">50%</output></label>
+      </div>
+      <div class="row inline">
+        <label class="chk"><input type="checkbox" id="chkErase"> Erase (or hold Alt)</label>
+        <label class="chk"><input type="checkbox" id="chkSnap" checked> Snap to edges</label>
+      </div>
+      <div class="row">
+        <label class="sl"><span class="lab">Parts overlay</span><input type="range" id="overlayOp" min="10" max="100" step="1" value="55"><output id="overlayOpV">55%</output></label>
+      </div>
+      <div class="row btns">
+        <button class="btn small" type="button" id="btnUndo" disabled title="Undo (Cmd/Ctrl+Z)">Undo</button>
+        <button class="btn small" type="button" id="btnRedo" disabled title="Redo (Shift+Cmd/Ctrl+Z)">Redo</button>
+        <button class="btn small" type="button" id="btnClearPart" disabled>Clear this part</button>
+        <button class="btn small" type="button" id="btnClearAll" disabled>Clear all parts</button>
+      </div>
+    </details>
+
+    <details class="sec" open>
+      <summary>Colour by part</summary>
+      <div class="row">
+        <span class="lab">Mixes</span>
+        <div class="seg" id="segMix" role="group" aria-label="Mixes"></div>
+        <p class="hint" id="mixHint"></p>
+      </div>
+      <div id="partsColour"></div>
+      <div class="row">
+        <span class="lab">Your presets</span>
+        <div class="btns"><button class="btn small" type="button" id="btnSavePreset">Save these settings</button></div>
+        <ul class="presets" id="presetList"></ul>
+      </div>
+    </details>
+
+    <details class="sec">
+      <summary>Ink</summary>
+      <div class="row">
+        <div class="seg" id="segInk" role="group" aria-label="Ink">
+          <button type="button" data-v="fine" aria-pressed="true">Fine ink</button>
+          <button type="button" data-v="story" aria-pressed="false">Story ink</button>
+        </div>
+        <p class="hint">Fine ink, a clean duotone, sells the gear. Story ink, with the gravure grain, tells people, places and the story (D116).</p>
+      </div>
+      <div class="grp" id="grpFine">
+        <label class="sl"><span class="lab">Black point</span><input type="range" data-p="ink.fine.blackPct" min="0" max="5" step="0.1"><output></output></label>
+        <label class="sl"><span class="lab">White point</span><input type="range" data-p="ink.fine.whitePct" min="90" max="100" step="0.1"><output></output></label>
+        <label class="chk"><input type="checkbox" data-p="ink.fine.whiteFromPlace"> White point from the background, so a sweep lands exactly on the paper</label>
+        <label class="sl"><span class="lab">Curve</span><input type="range" data-p="ink.fine.curve" min="0" max="1" step="0.01"><output></output></label>
+        <label class="sl"><span class="lab">Highlights to the substrate</span><input type="range" data-p="ink.fine.roll" min="0.02" max="0.3" step="0.01"><output></output></label>
+        <label class="chk"><input type="checkbox" data-p="ink.fine.dither"> Dither against banding</label>
+      </div>
+      <div class="grp" id="grpStory" hidden>
+        <label class="sl"><span class="lab">White point</span><input type="range" data-p="ink.story.whitePct" min="90" max="100" step="0.1"><output></output></label>
+        <label class="sl"><span class="lab">Black point</span><input type="range" data-p="ink.story.blackPct" min="0" max="5" step="0.1"><output></output></label>
+        <label class="sl"><span class="lab">Contrast</span><input type="range" data-p="ink.story.gamma" min="0.5" max="1.8" step="0.01"><output></output></label>
+        <label class="sl"><span class="lab">Grain</span><input type="range" data-p="ink.story.grain" min="0" max="0.6" step="0.01"><output></output></label>
+        <label class="sl"><span class="lab">Grain size</span><input type="range" data-p="ink.story.grainSize" min="0.3" max="2.5" step="0.05"><output></output></label>
+        <label class="sl"><span class="lab">Highlights to the substrate</span><input type="range" data-p="ink.story.roll" min="0.02" max="0.3" step="0.01"><output></output></label>
+      </div>
+      <div class="row">
+        <span class="lab">Ink colours</span>
+        <div class="colours">
+          <label><input type="color" data-p="ink.colours.ink"> Ink</label>
+          <label><input type="color" data-p="ink.colours.paper"> Paper</label>
+          <label><input type="color" data-p="ink.colours.sub"> Substrate</label>
+        </div>
+        <div class="btns"><button class="btn small" type="button" id="btnInkReset">Back to the house inks</button></div>
+      </div>
+      <div class="row">
+        <span class="lab">White balance</span>
+        <div class="seg" id="segWB" role="group" aria-label="White balance">
+          <button type="button" data-v="auto" aria-pressed="true">Auto</button>
+          <button type="button" data-v="pick" aria-pressed="false">Pick a grey</button>
+          <button type="button" data-v="off" aria-pressed="false">Off</button>
+        </div>
+        <label class="sl"><span class="lab">Strength</span><input type="range" data-p="wb.strength" min="0" max="1" step="0.05"><output></output></label>
+        <p class="hint">Auto balances on the photo's brightest near-greys. In a warm room, 60% keeps some warmth (D121).</p>
+      </div>
+    </details>
+
+    <details class="sec">
+      <summary>Background</summary>
+      <div class="row">
+        <div class="seg" id="segBg" role="group" aria-label="Background">
+          <button type="button" data-v="keep" aria-pressed="true">Keep, printed</button>
+          <button type="button" data-v="transparent" aria-pressed="false">Transparent</button>
+          <button type="button" data-v="fill" aria-pressed="false">Fill</button>
+        </div>
+      </div>
+      <div class="grp" id="grpFill" hidden>
+        <span class="lab">Fill colour</span>
+        <div class="swatches" id="fillSwatches"></div>
+        <label class="sl"><span class="lab">Shadows kept</span><input type="range" data-p="bg.shadows" min="0" max="1" step="0.01"><output></output></label>
+        <p class="hint">Shadows kept lays the place's shading into the fill, so a shadow under the gear stays.</p>
+      </div>
+      <p class="hint" id="bgHint">The place prints in the ink with its own colour setting.</p>
+    </details>
+
+    <details class="sec" id="secExport">
+      <summary>Save image</summary>
+      <div class="row">
+        <span class="lab">Size</span>
+        <div class="radios" id="exportSize">
+          <label><input type="radio" name="es" value="work"> <span id="esWork">This size</span></label>
+          <label><input type="radio" name="es" value="long" checked> <span>Long side</span> <input type="number" id="esLong" value="2000" min="200" max="6000" step="50"> px</label>
+          <label><input type="radio" name="es" value="square"> <span>Square, the whole photo</span> <input type="number" id="esSquare" value="2000" min="200" max="6000" step="50"> px</label>
+          <label><input type="radio" name="es" value="frame"> <span>Square, framed on the subject</span></label>
+          <label class="sub">The subject fills <input type="number" id="esFramePct" value="70" min="30" max="95" step="1"> % of the square’s height (D117), at the square size above</label>
+        </div>
+      </div>
+      <div class="row">
+        <span class="lab">Format</span>
+        <div class="seg" id="segFormat" role="group" aria-label="Format">
+          <button type="button" data-v="jpeg" aria-pressed="true">JPEG</button>
+          <button type="button" data-v="png" aria-pressed="false">PNG</button>
+          <button type="button" data-v="webp" aria-pressed="false">WebP</button>
+        </div>
+        <label class="sl" id="rowQuality"><span class="lab">Quality</span><input type="range" id="exportQ" min="50" max="100" step="1" value="85"><output id="exportQV">85</output></label>
+        <label class="field"><span class="lab">File name</span><input type="text" id="exportName" placeholder="gabriel-01-main" spellcheck="false"></label>
+      </div>
+      <div class="row btns"><button class="btn primary" type="button" id="btnExport2" disabled>Save image</button></div>
+      <p class="hint">The ink is drawn at the size you save, so story ink's grain stays crisp. Transparent backgrounds save as PNG.</p>
+    </details>
+
+    <details class="sec">
+      <summary>About</summary>
+      <div class="row about">
+        <p>The inks are D116 and the toned colour D121, exactly as in the decisions doc; each part gets its own strength (Q60). Steel prints as ink.</p>
+        <p>The split runs on your machine: <a href="https://huggingface.co/onnx-community/ormbg-ONNX" target="_blank" rel="noopener">ormbg</a> (Apache-2.0) finds the subject, <a href="https://huggingface.co/onnx-community/BiRefNet_lite-ONNX" target="_blank" rel="noopener">BiRefNet lite</a> (MIT) gives finer edges, <a href="https://huggingface.co/Xenova/yolos-tiny" target="_blank" rel="noopener">YOLOS tiny</a> (Apache-2.0) finds people and <a href="https://huggingface.co/Xenova/slimsam-77-uniform" target="_blank" rel="noopener">SlimSAM</a> (Apache-2.0) selects what you click, through <a href="https://github.com/huggingface/transformers.js" target="_blank" rel="noopener">Transformers.js</a> and <a href="https://onnxruntime.ai/" target="_blank" rel="noopener">ONNX Runtime Web</a>.</p>
+        <p id="deviceInfo"></p>
+        <p>Shortcuts: B brush, L lasso, C click, H hand, 1–5 parts, [ and ] brush size, X erase, R / P / O views, \ hold to compare, F fit, Space to move, Cmd/Ctrl+Z undo.</p>
+        <p><a href="https://github.com/EmpiricalArmory/photo-style-generator" target="_blank" rel="noopener">The code on GitHub</a></p>
+      </div>
+    </details>
+  </aside>
+</main>
+
+<dialog id="samplesDlg" aria-labelledby="samplesTitle">
+  <form method="dialog" class="dlg">
+    <div class="dlghead"><h2 id="samplesTitle">Samples</h2><button class="btn small" value="close">Close</button></div>
+    <p class="hint">Openly licensed stand-ins, to try the tool before your own photos.</p>
+    <div class="samplegrid" id="sampleGrid"></div>
+  </form>
+</dialog>
+
+<dialog id="presetDlg" aria-labelledby="presetTitle">
+  <form method="dialog" class="dlg small">
+    <div class="dlghead"><h2 id="presetTitle">Save these settings</h2></div>
+    <label class="field"><span class="lab">Name</span><input type="text" id="presetName" required placeholder="e.g. Gloves on paper"></label>
+    <div class="btns end"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="save">Save</button></div>
+  </form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
