@@ -3,7 +3,7 @@
 import { defaultParams, STRENGTHS, STRENGTH_LABELS, PART_KEYS, MIXES, applyMix, matchMix, createState, computeGains, computeLab, ensureNoise, computeDecon, computeStats, makeUniforms, renderCPU } from './engine.js';
 import { GLRenderer } from './gl.js';
 import { Editor, PARTS, softenMask } from './editor.js';
-import { autoSplit, SmartSelect, pickDevice, skinWithin } from '../shared/segment.js';
+import { autoSplit, SmartSelect, splitDevice, skinWithin } from '../shared/segment.js';
 import { drawScaled, toU8, toF32 } from '../shared/imgproc.js';
 
 const $ = (s) => document.querySelector(s);
@@ -31,7 +31,9 @@ S.exp.name = '';
 // ---------- status line ----------
 const statusEl = $('#status');
 const status = (msg, kind = '') => { statusEl.textContent = msg; statusEl.className = 'status' + (kind ? ' ' + kind : ''); };
-const progress = (p) => { if (p.pct == null) status(p.label + '…', 'busy'); else status(`Downloading ${p.label}: ${p.pct}% of ${p.mb} MB (first time only; your browser keeps it)`, 'busy'); };
+const progress = (p) => { if (p.pct == null) status(p.label + '…', 'busy'); else if (!p.mb) status(`Downloading ${p.label}…`, 'busy'); else status(`Downloading ${p.label}: ${p.pct}% of ${p.mb} MB (first time only; your browser keeps it)`, 'busy'); };
+// subject + people + Segment Anything + the ONNX runtime: about 100 MB on the processor, 140 MB on the graphics card
+const SPLIT_NOTE = 'The split finds the subject, the people and the gear. The first time, it downloads 100 to 140 MB of models, which your browser keeps for next time.';
 
 // ---------- rendering ----------
 const glCanvas = $('#glCanvas');
@@ -111,7 +113,7 @@ const openImage = async (blob, name, { split = $('#chkAutoSplit').checked, gearM
     S.exp.name = slug(name);
     $('#exportName').value = S.exp.name;
     $('#esWork').textContent = `This size (${w} × ${h})`;
-    $('#splitNote').textContent = 'The split finds the subject, people and the gear. The first time, it downloads about 55 MB of models, which your browser keeps for next time.';
+    $('#splitNote').textContent = SPLIT_NOTE;
     status(`${S.src.name}: ${sw} × ${sh} px, worked on at ${w} × ${h}.`);
     if (gearMask) applyGearMask(gearMask);
     if (split) await runSplit();
@@ -134,7 +136,7 @@ const runSplit = async () => {
   if (!S.E || S.splitting) return;
   S.splitting = true; $('#btnSplit').disabled = true; const key = S.imageKey;
   try {
-    const res = await autoSplit(S.E, S.work, { hq: $('#chkHQ').checked, onProgress: progress, smart: S.smart, smartKey: S.imageKey });
+    const res = await autoSplit(S.E, S.work, { onProgress: progress, smart: S.smart, smartKey: S.imageKey });
     if (key !== S.imageKey) return;
     S.lastSplit = { F: toU8(res.F) };
     editor.setMasks({ G: toU8(res.G), P: toU8(res.P), S: toU8(res.S), ST: new Uint8Array(S.E.n) }, 'Split the photo');
@@ -144,7 +146,7 @@ const runSplit = async () => {
     $('#splitNote').textContent = (people ? res.notes.join(' ') : 'No people found, so the whole subject is the gear. ' + res.notes.join(' ')).trim() + ' Check the Parts view and paint where it’s wrong.';
     status('Split done. Switch to Parts to check it.');
   } catch (e) { console.error(e); status('The split didn’t work here: ' + (e.message || e) + '. You can still paint the parts by hand.', 'err'); }
-  finally { S.splitting = false; $('#btnSplit').disabled = !S.E; }
+  finally { S.splitting = false; $('#btnSplit').disabled = !S.E; showDevice(); }
 };
 
 // ---------- export ----------
@@ -532,9 +534,10 @@ const idbGet = (key) => new Promise((res) => {
 
 // ---------- start ----------
 syncUI(); setTool('brush'); setView('result'); editor.updateLayers();
-pickDevice().then((d) => {
+const showDevice = () => splitDevice().then((d) => {
   $('#deviceInfo').textContent = `On this machine: the split runs ${d === 'webgpu' ? 'on the graphics card (WebGPU)' : 'on the processor (WebAssembly); WebGPU, where available, is faster'}, and the printing runs ${useGL ? 'on the graphics card (WebGL 2)' : 'on the processor'}.`;
 });
+showDevice();
 if (location.hash.startsWith('#handoff')) {
   idbGet('tuner').then((h) => { if (h && h.blob) openImage(h.blob, h.name || 'generated.png', { gearMask: h.gearMask || null }); });
 }

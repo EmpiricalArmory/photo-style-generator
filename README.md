@@ -23,7 +23,7 @@ Prints a photo in Empirical Armory's inks with the toned colour, and tunes the c
 - **Saving.** Choose any long side, a square of the whole photo, or a square framed on the subject (D117: the subject at 70% of the height). Formats are JPEG, PNG or WebP. The ink is drawn at the size you save.
 - **Projects** (`.tuned.json`) keep the photo, the parts and the settings, so you can carry on later.
 
-The first split downloads about 55 MB of models from Hugging Face, and the browser keeps them for next time. Where WebGPU is available, the split runs on the graphics card. Otherwise it runs on the processor and is slower.
+The first split downloads 100 to 140 MB of models from Hugging Face, and the browser keeps them for next time. Where WebGPU is available, the split runs on the graphics card and takes a few seconds. Otherwise, or if the graphics card can't run a model, it runs on the processor and is slower. The models run in a background worker, so the page stays responsive.
 
 ### Shortcuts
 
@@ -53,6 +53,7 @@ Plain HTML, CSS and JavaScript modules, with no build step. GitHub Pages serves 
 - `tuner/editor.js`: the viewport, the parts overlay, the brush, lasso and click tools, and undo.
 - `tuner/app.js`: the interface, export and projects.
 - `shared/segment.js`: the auto split and click to select.
+- `shared/ml-worker.js` and `shared/models.js`: the models, run in a worker. If the graphics card fails, the worker is restarted on the processor.
 - `shared/imgproc.js`: filters, morphology, colour conversions.
 
 The engine follows the recipes in the project's decisions doc (24 Oct 2026, D116 and D121) number for number.
@@ -62,7 +63,6 @@ The engine follows the recipes in the project's decisions doc (24 Oct 2026, D116
 - [Transformers.js](https://github.com/huggingface/transformers.js) 4.3.1 (Apache-2.0) and [ONNX Runtime Web](https://github.com/microsoft/onnxruntime) (MIT), loaded from the jsDelivr CDN at pinned versions.
 - Models, downloaded at run time from Hugging Face:
   - [ormbg](https://huggingface.co/onnx-community/ormbg-ONNX) (Apache-2.0)
-  - [BiRefNet lite](https://huggingface.co/onnx-community/BiRefNet_lite-ONNX) (MIT)
   - [YOLOS tiny](https://huggingface.co/Xenova/yolos-tiny) (Apache-2.0)
   - [SlimSAM](https://huggingface.co/Xenova/slimsam-77-uniform) (Apache-2.0)
 - Sample photos (`samples/`) are openly licensed. Their credits are in `samples/samples.json` and shown in the tool:

@@ -63,9 +63,8 @@
       <div class="row">
         <button class="btn primary" type="button" id="btnSplit" disabled>Split the photo</button>
         <label class="chk"><input type="checkbox" id="chkAutoSplit" checked> Split each photo as it opens</label>
-        <label class="chk"><input type="checkbox" id="chkHQ"> Finer edges (WebGPU only, a larger download)</label>
       </div>
-      <p class="note" id="splitNote">The split finds the subject, people and the gear. The first time, it downloads about 55 MB of models, which your browser keeps for next time.</p>
+      <p class="note" id="splitNote">The split finds the subject, the people and the gear. The first time, it downloads 100 to 140 MB of models, which your browser keeps for next time.</p>
       <div class="row" id="rowWhole" hidden>
         <span class="lab">The whole subject is</span>
         <div class="btns"><button class="btn small" type="button" data-whole="gear">Gear</button><button class="btn small" type="button" data-whole="kit">Kit</button></div>
@@ -213,7 +212,7 @@
       <summary>About</summary>
       <div class="row about">
         <p>The inks are D116 and the toned colour D121, exactly as in the decisions doc; each part gets its own strength (Q60). Steel prints as ink.</p>
-        <p>The split runs on your machine: <a href="https://huggingface.co/onnx-community/ormbg-ONNX" target="_blank" rel="noopener">ormbg</a> (Apache-2.0) finds the subject, <a href="https://huggingface.co/onnx-community/BiRefNet_lite-ONNX" target="_blank" rel="noopener">BiRefNet lite</a> (MIT) gives finer edges, <a href="https://huggingface.co/Xenova/yolos-tiny" target="_blank" rel="noopener">YOLOS tiny</a> (Apache-2.0) finds people and <a href="https://huggingface.co/Xenova/slimsam-77-uniform" target="_blank" rel="noopener">SlimSAM</a> (Apache-2.0) selects what you click, through <a href="https://github.com/huggingface/transformers.js" target="_blank" rel="noopener">Transformers.js</a> and <a href="https://onnxruntime.ai/" target="_blank" rel="noopener">ONNX Runtime Web</a>.</p>
+        <p>The split runs on your machine: <a href="https://huggingface.co/onnx-community/ormbg-ONNX" target="_blank" rel="noopener">ormbg</a> (Apache-2.0) finds the subject, <a href="https://huggingface.co/Xenova/yolos-tiny" target="_blank" rel="noopener">YOLOS tiny</a> (Apache-2.0) finds people and <a href="https://huggingface.co/Xenova/slimsam-77-uniform" target="_blank" rel="noopener">SlimSAM</a> (Apache-2.0) selects what you click, through <a href="https://github.com/huggingface/transformers.js" target="_blank" rel="noopener">Transformers.js</a> and <a href="https://onnxruntime.ai/" target="_blank" rel="noopener">ONNX Runtime Web</a>.</p>
         <p id="deviceInfo"></p>
         <p>Shortcuts: B brush, L lasso, C click, H hand, 1–5 parts, [ and ] brush size, X erase, R / P / O views, \ hold to compare, F fit, Space to move, Cmd/Ctrl+Z undo.</p>
         <p><a href="https://github.com/EmpiricalArmory/photo-style-generator" target="_blank" rel="noopener">The code on GitHub</a></p>

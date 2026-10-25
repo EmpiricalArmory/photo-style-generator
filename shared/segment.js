@@ -1,19 +1,10 @@
 // Splitting a photo into parts, in the browser: the subject (foreground), people, and the gear.
-// Models run on the visitor's own machine through Transformers.js and ONNX Runtime Web (loaded from the jsDelivr CDN at a
-// pinned version); the models' weights download once from Hugging Face and are cached by the browser. Nothing is uploaded.
-//   subject:  onnx-community/ormbg-ONNX (Apache-2.0), or BiRefNet lite (MIT) where WebGPU is available
-//   people:   Xenova/yolos-tiny (Apache-2.0), a small object detector, used for its "person" boxes
-//   clicks:   Xenova/slimsam-77-uniform (Apache-2.0), Segment Anything distilled, for click-to-select
+// The models (see models.js) run on the visitor's own machine through Transformers.js and ONNX Runtime Web, inside a
+// worker (ml-worker.js) so the page stays responsive. Nothing is uploaded. Where the graphics card fails, the worker is
+// replaced by one that runs on the processor, and the job runs again.
 import { boxMean, guided, binarize, erode, dilate, components, sm, kmeans, nearest } from './imgproc.js';
-
-export const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1/dist/transformers.min.js';
-let T = null;
-export const lib = async () => {
-  if (T) return T;
-  T = await import(TRANSFORMERS_URL); // ONNX Runtime's WebAssembly files come from the same CDN, at the version it pins
-  T.env.allowLocalModels = false;
-  return T;
-};
+import { TRANSFORMERS_URL, MODELS } from './models.js';
+export { TRANSFORMERS_URL, MODELS };
 
 let devicePromise = null;
 export const pickDevice = () => (devicePromise ||= (async () => {
@@ -21,71 +12,93 @@ export const pickDevice = () => (devicePromise ||= (async () => {
   return 'wasm';
 })());
 
-export const MODELS = {
-  subject: { id: 'onnx-community/ormbg-ONNX', name: 'Subject (ormbg)', dtype: { webgpu: 'fp16', wasm: 'q8' }, mb: { webgpu: 88, wasm: 44 } },
-  subjectHQ: { id: 'onnx-community/BiRefNet_lite-ONNX', name: 'Subject, fine edges (BiRefNet lite)', dtype: { webgpu: 'fp16' }, mb: { webgpu: 115 } },
-  people: { id: 'Xenova/yolos-tiny', name: 'People (YOLOS tiny)', dtype: { webgpu: 'fp32', wasm: 'q8' }, mb: { webgpu: 26, wasm: 10 } },
-  sam: { id: 'Xenova/slimsam-77-uniform', name: 'Click to select (SlimSAM)', dtype: { webgpu: 'fp16', wasm: 'fp32' }, mb: { webgpu: 21, wasm: 40 } },
+// after the graphics card has failed once, this tab sticks to the processor
+const CPU_ONLY = 'ea-ml-cpu-only';
+const session = {
+  get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* storage blocked */ } },
 };
 
-// collects download progress across a model's files into one percentage
-const progressFor = (label, onProgress) => {
-  const files = new Map();
-  return (p) => {
-    if (!onProgress) return;
-    if (p.status === 'progress' && p.file) { files.set(p.file, [p.loaded || 0, p.total || 0]); }
-    if (p.status === 'done' && p.file && files.has(p.file)) { const [, t] = files.get(p.file); files.set(p.file, [t, t]); }
-    let l = 0, t = 0; for (const [a, b] of files.values()) { l += a; t += b; }
-    if (t > 0) onProgress({ label, pct: Math.round((100 * l) / t), mb: Math.round(t / 1e6) });
-  };
-};
+class ModelWorker {
+  constructor() { this.worker = null; this.ready = null; this.device = null; this.seq = 0; this.gen = 0; this.pending = new Map(); this.samKey = null; }
 
-const cache = {};
-const getPipeline = async (task, key, onProgress, forceDevice) => {
-  const tf = await lib();
-  const dev = forceDevice || (await pickDevice());
-  const m = MODELS[key], ck = `${key}:${dev}`;
-  if (!cache[ck]) {
-    const dtype = m.dtype[dev] || m.dtype.wasm;
-    cache[ck] = tf.pipeline(task, m.id, { device: dev, dtype, progress_callback: progressFor(m.name, onProgress) }).catch((e) => { delete cache[ck]; throw e; });
+  start() {
+    return (this.ready ||= (async () => {
+      const want = !session.get(CPU_ONLY) && (await pickDevice()) === 'webgpu' ? 'webgpu' : 'wasm';
+      const w = new Worker(new URL('./ml-worker.js', import.meta.url), { type: 'module' });
+      w.onmessage = (e) => this.receive(e.data);
+      w.onerror = (e) => { e.preventDefault(); this.failAll(new Error('the model worker stopped' + (e.message ? ': ' + e.message : ''))); };
+      this.worker = w;
+      const { device } = await this.send('init', { device: want });
+      this.device = device;
+      return device;
+    })().catch((e) => { this.stop(); throw e; }));
   }
-  return cache[ck];
-};
 
-const rawFromCanvas = async (canvas) => { const tf = await lib(); return tf.RawImage.fromCanvas(canvas); };
+  receive(m) {
+    const p = this.pending.get(m.id); if (!p) return;
+    if (m.type === 'progress') { p.onProgress?.(m); return; }
+    this.pending.delete(m.id);
+    if (m.type === 'error') p.reject(Object.assign(new Error(m.message), { device: m.device })); else p.resolve(m.result);
+  }
+
+  failAll(err) { const ps = [...this.pending.values()]; this.pending.clear(); for (const p of ps) p.reject(err); }
+
+  send(type, data = {}, onProgress = null, transfer = []) {
+    const id = ++this.seq;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject, onProgress });
+      this.worker.postMessage({ id, type, ...data }, transfer);
+    });
+  }
+
+  stop() { this.gen++; if (this.worker) this.worker.terminate(); this.worker = null; this.ready = null; this.device = null; this.samKey = null; this.failAll(new Error('the model worker was restarted')); }
+
+  // runs fn (which talks to the worker); if the graphics card fails, starts a fresh worker on the processor and runs fn again
+  async run(fn, onProgress) {
+    await this.start();
+    const gen = this.gen;
+    try { return await fn(); }
+    catch (e) {
+      if (this.gen === gen) { // (otherwise another job has already restarted the worker: just run again)
+        if (this.device !== 'webgpu' || !navigator.onLine) throw e;
+        console.warn('The graphics card could not run the model; starting again on the processor', e);
+        onProgress?.({ label: 'The graphics card could not run it; trying the processor', pct: null });
+        session.set(CPU_ONLY, '1');
+        this.stop();
+      }
+      await this.start();
+      return await fn();
+    }
+  }
+}
+export const models = new ModelWorker();
+// where the split runs: 'webgpu' or 'wasm' once it has started, else the best guess
+export const splitDevice = async () => models.device || (session.get(CPU_ONLY) ? 'wasm' : pickDevice());
+
+// a fresh copy of the canvas's pixels, to hand to the worker
+const pixels = (canvas) => {
+  const d = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height);
+  return { rgba: d.data.buffer, w: canvas.width, h: canvas.height };
+};
 
 // the subject's alpha (0..1) at the canvas's size
-export const subjectMask = async (canvas, { hq = false, onProgress } = {}) => {
-  const run = async (key, dev) => {
-    const seg = await getPipeline('background-removal', key, onProgress, dev);
-    onProgress?.({ label: 'Finding the subject', pct: null });
-    const out = await seg(await rawFromCanvas(canvas));
-    const o = Array.isArray(out) ? out[0] : out, n = canvas.width * canvas.height, a = new Float32Array(n);
-    if (o.width !== canvas.width || o.height !== canvas.height) throw new Error('unexpected mask size');
-    let s = 0;
-    for (let i = 0; i < n; i++) { a[i] = o.data[i * o.channels + (o.channels - 1)] / 255; s += a[i]; }
-    // a GPU that mishandles half floats gives an empty or full mask: treat that as a failure so WASM is tried
-    const mean = s / n;
-    if (!(mean > 0.002 && mean < 0.995)) throw new Error('the subject model returned an empty mask');
-    return a;
-  };
-  const dev = await pickDevice();
-  if (hq && dev === 'webgpu') { try { return await run('subjectHQ', 'webgpu'); } catch (e) { console.warn('BiRefNet failed, using ormbg', e); } }
-  try { return await run('subject', dev); }
-  catch (e) {
-    if (dev === 'webgpu') { console.warn('WebGPU failed, trying WASM', e); onProgress?.({ label: 'The graphics card could not run it; trying the processor', pct: null }); return run('subject', 'wasm'); }
-    throw e;
-  }
-};
+export const subjectMask = (canvas, { onProgress } = {}) => models.run(async () => {
+  const img = pixels(canvas);
+  const a = await models.send('subject', img, onProgress, [img.rgba]);
+  let s = 0; for (let i = 0; i < a.length; i++) s += a[i];
+  // a graphics card that mishandles half floats gives an empty or full mask: that counts as a failure, so the processor is tried
+  const mean = s / a.length;
+  if (!(mean > 0.002 && mean < 0.995)) throw new Error('the subject model returned an empty mask');
+  return a;
+}, onProgress);
 
 // people: boxes {x0,y0,x1,y1,score} in canvas pixels, from a small copy of the photo
 export const findPeople = async (canvas, { onProgress } = {}) => {
-  const det = await getPipeline('object-detection', 'people', onProgress);
-  onProgress?.({ label: 'Finding people', pct: null });
   const s = Math.min(1, 640 / Math.max(canvas.width, canvas.height)), sw = Math.round(canvas.width * s), sh = Math.round(canvas.height * s);
   const small = document.createElement('canvas'); small.width = sw; small.height = sh;
-  const g = small.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(canvas, 0, 0, sw, sh);
-  const out = await det(await rawFromCanvas(small), { threshold: 0.5 });
+  const g = small.getContext('2d', { willReadFrequently: true }); g.imageSmoothingQuality = 'high'; g.drawImage(canvas, 0, 0, sw, sh);
+  const out = await models.run(() => { const img = pixels(small); return models.send('people', img, onProgress, [img.rgba]); }, onProgress);
   const boxes = out.filter((o) => o.label === 'person' && o.score >= 0.6).map((o) => ({ x0: o.box.xmin / s, y0: o.box.ymin / s, x1: o.box.xmax / s, y1: o.box.ymax / s, score: o.score }))
     .filter((b) => (b.x1 - b.x0) * (b.y1 - b.y0) > 0.01 * canvas.width * canvas.height)
     .sort((a, b) => b.score - a.score);
@@ -126,10 +139,10 @@ export const skinWithin = (E, P) => {
 
 // the whole split: subject -> people (blob-like parts inside person boxes, completed with Segment Anything) -> gear
 // (the rest of the subject, and long thin parts such as blades held by people) -> skin (by colour, inside people)
-export const autoSplit = async (E, canvas, { hq = false, onProgress, smart = null, smartKey = null } = {}) => {
+export const autoSplit = async (E, canvas, { onProgress, smart = null, smartKey = null } = {}) => {
   const { w, h, n, Ly } = E, notes = [];
   let F;
-  try { F = await subjectMask(canvas, { hq, onProgress }); }
+  try { F = await subjectMask(canvas, { onProgress }); }
   catch (e) { console.warn('Subject model failed; using the plain-background method', e); notes.push('The subject model could not run here, so the plain-background method was used.'); F = classicSubject(E); }
   F = guided(Ly, F, w, h, Math.max(2, Math.round(Math.max(w, h) / 600)), 1e-3);
   let boxes = [];
@@ -196,33 +209,25 @@ export const autoSplit = async (E, canvas, { hq = false, onProgress, smart = nul
   return { G, P, S, F, boxes, notes };
 };
 
-// click to select (Segment Anything): the photo is encoded once, then each click returns a mask in ~0.1–1 s
+// click to select (Segment Anything): the photo is encoded once in the worker, then each click returns masks in ~0.1–1 s
 export class SmartSelect {
-  constructor() { this.ready = null; this.key = null; }
-  async load(onProgress) {
-    if (this.model) return;
-    const tf = await lib(), dev = await pickDevice(), m = MODELS.sam;
-    const opts = { device: dev, dtype: m.dtype[dev], progress_callback: progressFor(m.name, onProgress) };
-    try { this.model = await tf.SamModel.from_pretrained(m.id, opts); }
-    catch (e) { if (dev !== 'webgpu') throw e; this.model = await tf.SamModel.from_pretrained(m.id, { ...opts, device: 'wasm', dtype: m.dtype.wasm }); }
-    this.processor = await tf.AutoProcessor.from_pretrained(m.id);
-  }
+  constructor() { this.key = null; this.canvas = null; this.onProgress = null; }
   async setImage(canvas, key, onProgress) {
-    if (this.key === key && this.emb) return;
-    await this.load(onProgress);
-    onProgress?.({ label: 'Reading the photo for clicks', pct: null });
-    this.raw = await rawFromCanvas(canvas);
-    this.inputs = await this.processor(this.raw);
-    this.emb = await this.model.get_image_embeddings(this.inputs);
-    this.key = key; this.w = canvas.width; this.h = canvas.height;
+    this.canvas = canvas; this.key = key; this.onProgress = onProgress || null;
+    await models.run(() => this.encode(), this.onProgress);
+  }
+  // (re)encodes the photo when the worker doesn't have this one, as after a restart
+  async encode() {
+    const key = this.key;
+    if (models.samKey === key) return;
+    const img = pixels(this.canvas);
+    await models.send('samImage', img, this.onProgress, [img.rgba]);
+    models.samKey = key;
   }
   // points in canvas pixels; labels 1 = this object, 0 = not this. All three candidate masks, with their scores
   async queryAll(points, labels) {
-    const inp = await this.processor(this.raw, { input_points: [points], input_labels: [labels] });
-    const out = await this.model({ ...this.emb, input_points: inp.input_points, input_labels: inp.input_labels });
-    const masks = await this.processor.post_process_masks(out.pred_masks, this.inputs.original_sizes, this.inputs.reshaped_input_sizes);
-    const iou = Array.from(out.iou_scores.data), n = this.w * this.h, d = masks[0].data;
-    return iou.map((score, k) => { const m = new Float32Array(n), off = k * n; let area = 0; for (let i = 0; i < n; i++) if (d[off + i]) { m[i] = 1; area++; } return { mask: m, score, area }; });
+    const res = await models.run(async () => { await this.encode(); return models.send('samQuery', { points, labels }); }, this.onProgress);
+    return res.map((r) => ({ mask: Float32Array.from(r.mask), score: r.score, area: r.area }));
   }
   async query(points, labels) {
     const all = await this.queryAll(points, labels);

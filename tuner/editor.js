@@ -50,12 +50,17 @@ export class Editor {
   }
   fit() {
     if (!this.w) return;
+    // Keeps fitting on resize until the person zooms or pans. A hidden or collapsed viewport
+    // (a background tab, a closed side panel) has no size yet, so the fit waits for one.
+    this.autoFit = true;
     const r = this.viewport.getBoundingClientRect(), pad = 24;
-    this.scale = Math.min((r.width - pad * 2) / this.w, (r.height - pad * 2) / this.h, 4);
+    if (r.width < pad * 2 + 16 || r.height < pad * 2 + 16) return;
+    this.scale = Math.max(0.02, Math.min((r.width - pad * 2) / this.w, (r.height - pad * 2) / this.h, 4));
     this.tx = (r.width - this.w * this.scale) / 2; this.ty = (r.height - this.h * this.scale) / 2;
     this.applyTransform();
   }
   zoomAt(f, cx, cy) {
+    this.autoFit = false;
     const ns = Math.max(0.02, Math.min(16, this.scale * f));
     this.tx = cx - (cx - this.tx) * (ns / this.scale); this.ty = cy - (cy - this.ty) * (ns / this.scale); this.scale = ns;
     this.applyTransform();
@@ -192,7 +197,7 @@ export class Editor {
       const r = vp.getBoundingClientRect();
       if (e.ctrlKey || e.metaKey) this.zoomAt(Math.exp(-e.deltaY * 0.01), e.clientX - r.left, e.clientY - r.top);
       else if (e.altKey) this.zoomAt(Math.exp(-e.deltaY * 0.002), e.clientX - r.left, e.clientY - r.top);
-      else { this.tx -= e.deltaX; this.ty -= e.deltaY; this.applyTransform(); }
+      else { this.autoFit = false; this.tx -= e.deltaX; this.ty -= e.deltaY; this.applyTransform(); }
     }, { passive: false });
     vp.addEventListener('pointerdown', (e) => this.down(e));
     vp.addEventListener('pointermove', (e) => this.move(e));
@@ -200,7 +205,12 @@ export class Editor {
     vp.addEventListener('pointercancel', (e) => this.up(e));
     vp.addEventListener('pointerleave', () => { this.hover = null; this.drawCursor(); });
     vp.addEventListener('contextmenu', (e) => e.preventDefault());
-    new ResizeObserver(() => { const r = vp.getBoundingClientRect(); this.ui.width = Math.round(r.width * devicePixelRatio); this.ui.height = Math.round(r.height * devicePixelRatio); this.ui.style.width = r.width + 'px'; this.ui.style.height = r.height + 'px'; this.drawCursor(); }).observe(vp);
+    new ResizeObserver(() => {
+      const r = vp.getBoundingClientRect();
+      this.ui.width = Math.round(r.width * devicePixelRatio); this.ui.height = Math.round(r.height * devicePixelRatio);
+      this.ui.style.width = r.width + 'px'; this.ui.style.height = r.height + 'px';
+      if (this.autoFit) this.fit(); else this.drawCursor();
+    }).observe(vp);
   }
   panning(e) { return this.spaceDown || e.button === 1 || e.button === 2 || this.tool === 'hand'; }
   async down(e) {
@@ -239,7 +249,7 @@ export class Editor {
     const [x, y] = this.toImage(e.clientX, e.clientY);
     this.hover = [e.clientX, e.clientY];
     const p = this.pointer;
-    if (p && p.mode === 'pan') { this.tx = p.tx + e.clientX - p.sx; this.ty = p.ty + e.clientY - p.sy; this.applyTransform(); return; }
+    if (p && p.mode === 'pan') { this.autoFit = false; this.tx = p.tx + e.clientX - p.sx; this.ty = p.ty + e.clientY - p.sy; this.applyTransform(); return; }
     if (p && p.mode === 'brush') this.strokeTo(x, y);
     else if (p && p.mode === 'lasso') { const last = p.pts[p.pts.length - 1]; if (Math.hypot(x - last[0], y - last[1]) * this.scale > 3) p.pts.push([x, y]); }
     this.drawCursor();
