@@ -68,7 +68,7 @@
     <h2>Send photos to Tuned by part</h2>
     <div class="sub"><span class="count"></span><button type="button" class="all">Tick all</button><button type="button" class="nonebtn">Untick all</button></div>
     <div class="grid"></div>
-    <div class="foot"><span class="msg">They open in Tuned by part and stay in your browser only.</span><button type="button" class="btn close">Close</button><button type="button" class="btn primary send">Send</button></div>
+    <div class="foot"><span class="msg">They open in Tuned by part and stay in your browser only.</span><button type="button" class="btn close">Close</button><button type="button" class="btn zip" title="If no new tab opens here, save them and drop the zip into Tuned by part">Save as a zip</button><button type="button" class="btn primary send">Send</button></div>
   </div>`;
   const $ = (s) => root.querySelector(s), grid = $('.grid'), msg = (t) => { $('.msg').textContent = t; };
   if (!list.length) grid.outerHTML = '<p class="none">No photos large enough were found on this page.</p>';
@@ -79,7 +79,7 @@
     grid && grid.appendChild(lab);
   }
   const boxes = () => [...root.querySelectorAll('input[type=checkbox]')];
-  const count = () => { const n = boxes().filter((b) => b.checked).length; $('.count').textContent = `${n} of ${list.length} ticked`; $('.send').disabled = !n; $('.send').textContent = n ? `Send ${n}` : 'Send'; };
+  const count = () => { const n = boxes().filter((b) => b.checked).length; $('.count').textContent = `${n} of ${list.length} ticked`; $('.send').disabled = $('.zip').disabled = !n; $('.send').textContent = n ? `Send ${n}` : 'Send'; };
   root.addEventListener('change', count); count();
   $('.all').onclick = () => { boxes().forEach((b) => { b.checked = true; }); count(); };
   $('.nonebtn').onclick = () => { boxes().forEach((b) => { b.checked = false; }); count(); };
@@ -105,6 +105,31 @@
     throw new Error('unreadable');
   };
 
+  // read the ticked photos at their largest size; what can't be read from here is counted
+  const readChosen = async () => {
+    const chosen = boxes().filter((b) => b.checked).map((b) => list[+b.dataset.i]), got = [], failed = [];
+    for (const [k, it] of chosen.entries()) {
+      msg(`Reading ${k + 1} of ${chosen.length}…`);
+      try { const { blob, url } = await fetchImage(it); got.push({ name: nameOf(url, blob.type, k + 1), blob }); } catch (e) { failed.push(it); }
+    }
+    const used = new Set(); for (const g of got) { let n = g.name, q = 2; while (used.has(n)) n = g.name.replace(/(\.[a-z0-9]+)$/i, `-${q++}$1`); used.add(n); g.name = n; }
+    return { got, failed };
+  };
+  const unreadable = 'None of them could be read here: this site doesn’t let other pages read its pictures. Save them to your computer and drop them into Tuned by part.';
+  // where a new tab can't open (an app's own browser), the photos go out as one zip to drop into Tuned by part
+  $('.zip').onclick = async () => {
+    $('.zip').disabled = $('.send').disabled = true;
+    try {
+      const { got, failed } = await readChosen();
+      if (!got.length) { msg(unreadable); return; }
+      msg('Making the zip…');
+      const { makeZip } = await import(new URL('../tuner/zip.js', me).href);
+      const a = document.createElement('a'); a.href = URL.createObjectURL(await makeZip(got)); a.download = `photos-${location.hostname.replace(/^www\./, '')}.zip`;
+      document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 8000);
+      msg(`Saved ${got.length} in a zip${failed.length ? ` (${failed.length} couldn’t be read)` : ''}. Drop it into Tuned by part.`);
+    } catch (e) { msg('The zip couldn’t be made here: ' + (e.message || e)); }
+    finally { count(); }
+  };
   $('.send').onclick = async () => {
     const chosen = boxes().filter((b) => b.checked).map((b) => list[+b.dataset.i]);
     if (!chosen.length) return;
@@ -122,13 +147,9 @@
       if (e.data.type === 'ea-tuner-received') { msg(`Sent ${e.data.count} to Tuned by part.`); window.removeEventListener('message', onMsg); setTimeout(close, 1800); }
     };
     window.addEventListener('message', onMsg);
-    $('.send').disabled = true;
-    const got = [], failed = [];
-    for (const [k, it] of chosen.entries()) {
-      msg(`Reading ${k + 1} of ${chosen.length}…`);
-      try { const { blob, url } = await fetchImage(it); got.push({ name: nameOf(url, blob.type, k + 1), blob }); } catch (e) { failed.push(it); }
-    }
-    if (!got.length) { msg('None of them could be read here: this site doesn’t let other pages read its pictures. Save them to your computer and drop them into Tuned by part.'); window.removeEventListener('message', onMsg); count(); return; }
+    $('.send').disabled = $('.zip').disabled = true;
+    const { got, failed } = await readChosen();
+    if (!got.length) { msg(unreadable); window.removeEventListener('message', onMsg); count(); return; }
     photos = got;
     msg(`Read ${got.length}${failed.length ? ` (${failed.length} couldn’t be read)` : ''}. Waiting for Tuned by part to open…`);
     post();

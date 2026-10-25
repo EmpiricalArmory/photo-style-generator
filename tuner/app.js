@@ -171,13 +171,15 @@ const recordOf = (it) => ({
   analysis: it.analysis, analysisSize: it.analysisSize, wbPick: it.wbPick, wbPickMed: it.wbPickMed,
   split: { status: it.split.status === 'done' || it.split.status === 'error' ? it.split.status : 'none', note: it.split.note, people: it.split.people },
 });
-const itemFromRecord = (r) => ({ ...r, split: { ...r.split }, ...mem() });
+const itemFromRecord = (r) => ({ ...r, split: { ...r.split }, ...mem(), stored: true });
 let storeWarned = false;
 const storeFailed = (e) => { console.warn(e); if (!storeWarned) { storeWarned = true; status('This browser couldn’t keep the batch (its storage is full or blocked). Save a project to keep your work.', 'err'); } };
-const persist = (it) => {
-  clearTimeout(it._pt);
-  it._pt = setTimeout(() => { if (!S.items.includes(it)) return; it.rev = (it.rev || 0) + 1; store.putItem(recordOf(it)).then(announce).catch(storeFailed); }, 500);
-};
+// a photo is kept at once when it's new, and after a short pause when it changes (and whenever the page is hidden)
+const writeItem = (it) => { clearTimeout(it._pt); it._pt = 0; if (!S.items.includes(it)) return; it.rev = (it.rev || 0) + 1; store.putItem(recordOf(it)).then(() => { it.stored = true; announce(); }).catch(storeFailed); };
+const persist = (it) => { clearTimeout(it._pt); if (!it.stored && !it._pt0) { it._pt0 = true; writeItem(it); return; } it._pt = setTimeout(() => writeItem(it), 500); };
+const flushAll = () => { for (const it of S.items) if (it._pt) writeItem(it); if (S.cur && S.cur.partsDirty) flushParts(S.cur); };
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushAll(); });
+window.addEventListener('pagehide', flushAll);
 const saveOrder = () => store.putMeta('order', S.items.map((i) => i.id)).then(announce).catch(storeFailed);
 const saveCurrent = () => store.putMeta('current', S.cur ? S.cur.id : null).catch(() => {});
 
@@ -651,7 +653,13 @@ const openProject = async (file) => {
   try {
     if (/\.json$/i.test(file.name) || file.type === 'application/json') { await openOldProject(file); return; }
     const zip = await readZip(file), pj = zip.get('project.json');
-    if (!pj) throw new Error('there’s no project.json in it');
+    if (!pj) { // a zip of photos (the send-photos bookmark saves one): add them
+      const names = [...zip.keys()].filter((n) => IMG_RE.test(n) && !n.startsWith('__MACOSX/')).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+      if (!names.length) throw new Error('there are no photos or project in it');
+      const list = []; for (const n of names) list.push({ blob: await zip.get(n)(), name: n.split('/').pop() });
+      await addPhotos(list);
+      return;
+    }
     const meta = JSON.parse(await (await pj()).text());
     if (meta.app !== 'ea-tuned-by-part') throw new Error('this isn’t a Tuned by part project');
     if (S.items.length && !(await confirmDlg('Open this project?', `The ${plural(S.items.length, 'photo')} open now leave the batch. Save a project first if you want to keep them.`, 'Open'))) return;
@@ -1106,7 +1114,7 @@ const syncFromStore = async () => {
       syncAgain = false;
       const recs = (await store.getItems()) || [], order = (await store.getMeta('order')) || [];
       const byId = new Map(recs.map((r) => [r.id, r]));
-      const gone = S.items.filter((i) => !byId.has(i.id));
+      const gone = S.items.filter((i) => i.stored && !byId.has(i.id)); // (photos added here and not yet kept aren't gone)
       let changed = gone.length > 0;
       if (gone.length) await removeItems(gone, { fromSync: true });
       for (const it of S.items) { // changed elsewhere; the photo on screen here keeps its own edits
