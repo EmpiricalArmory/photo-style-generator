@@ -2,7 +2,7 @@
 
 A web tool for the shop's photographs, in the house style. It runs entirely in the browser, so photos are never uploaded. It stands alone: nothing in it depends on any other tool.
 
-**Open it:** https://empiricalarmory.github.io/photo-style-generator/tuner/ (the repository's own address opens it too)
+**Open it:** https://empiricalarmory.github.io/photo-style-generator/ (the old address, …/tuner/, forwards there)
 
 ## What it does
 
@@ -59,19 +59,20 @@ The first split downloads 100 to 140 MB of models from Hugging Face, and the bro
 
 Plain HTML, CSS and JavaScript modules, with no build step. GitHub Pages serves the repository as it is.
 
-- `tuner/engine.js`: the ink and colour maths, with a CPU renderer used as the reference, and each photo's levels kept as histograms.
-- `tuner/gl.js`: the same maths in a WebGL 2 shader, so every slider redraws at once.
-- `tuner/print.js`: printing at any size in tiles (the grain comes from each pixel's position, so tiles join without seams), for saving and for the batch's previews.
-- `tuner/editor.js`: the viewport, the parts overlay, the brush, lasso and click tools, the compare line, and undo.
-- `tuner/parts.js`: the parts and their colours.
-- `tuner/partsmap.js`: parts maps: finding the colours painted, guessing their parts, and turning them into the parts.
-- `tuner/app.js`: the interface, the batch, saving and projects.
-- `tuner/store.js`: the batch kept in the browser (IndexedDB), each photo's parts compressed.
-- `tuner/zip.js`: a small zip writer and reader for Save all and projects.
+- `src/engine.js`: the ink and colour maths, with a CPU renderer used as the reference, and each photo's levels kept as histograms.
+- `src/gl.js`: the same maths in a WebGL 2 shader, so every slider redraws at once.
+- `src/print.js`: printing at any size in tiles (the grain comes from each pixel's position, so tiles join without seams), for saving and for the batch's previews.
+- `src/editor.js`: the viewport, the parts overlay, the brush, lasso and click tools, the compare line, and undo.
+- `src/parts.js`: the parts and their colours.
+- `src/partsmap.js`: parts maps: finding the colours painted, guessing their parts, and turning them into the parts.
+- `src/app.js`: the interface, the batch, saving and projects.
+- `src/store.js`: the batch kept in the browser (IndexedDB), each photo's parts compressed.
+- `src/zip.js`: a small zip writer and reader for Save all and projects.
 - `lib/segment.js`: the auto split and click to select.
 - `lib/ml-worker.js` and `lib/models.js`: the models, run in a worker. If the graphics card fails, the worker is restarted on the processor.
 - `lib/imgproc.js`: filters, morphology, colour conversions, grain.
-- `index.html` at the root: opens the tool.
+- `index.html`: the tool's page, at the repository's address; `src/tuner.css` its styles.
+- `tuner/index.html`: forwards the old address to the new one.
 
 The engine follows the recipes in the project's decisions doc (24 Oct 2026, D116 and D121) number for number.
 

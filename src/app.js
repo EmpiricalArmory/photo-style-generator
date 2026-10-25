@@ -1195,16 +1195,16 @@ window.addEventListener('paste', (e) => {
 
 // ---------- samples ----------
 let samples = null;
-const addSample = async (s) => { const blob = await (await fetch('../samples/' + s.file)).blob(); return { blob, name: s.file }; };
+const addSample = async (s) => { const blob = await (await fetch('samples/' + s.file)).blob(); return { blob, name: s.file }; };
 const showSamples = async () => {
   const grid = $('#sampleGrid');
   if (!samples) {
-    try { samples = await (await fetch('../samples/samples.json')).json(); } catch (e) { samples = []; }
+    try { samples = await (await fetch('samples/samples.json')).json(); } catch (e) { samples = []; }
     grid.innerHTML = '';
     for (const s of samples) {
       const b = document.createElement('button'); b.type = 'button';
       b.innerHTML = '<img alt="" loading="lazy"><span class="t"></span><span class="c"></span>';
-      b.querySelector('img').src = '../samples/' + s.file; b.querySelector('.t').textContent = s.title;
+      b.querySelector('img').src = 'samples/' + s.file; b.querySelector('.t').textContent = s.title;
       b.querySelector('.c').innerHTML = `${s.creator}, <a href="${s.licenceUrl}" target="_blank" rel="noopener">${s.licence}</a>, <a href="${s.source}" target="_blank" rel="noopener">source</a>`;
       b.addEventListener('click', async (e) => { if (e.target.closest('a')) return; $('#samplesDlg').close(); addPhotos([await addSample(s)]); });
       grid.appendChild(b);
