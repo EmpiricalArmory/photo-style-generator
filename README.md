@@ -24,10 +24,16 @@ Prints a batch of photos in Empirical Armory's inks with the toned colour, tuned
 - **The background** (in its Fine-tune). Printed, removed to transparent, or filled with the paper or any colour, its shadows kept if you like. The background can also be lifted toward the paper.
 - **Mixes (Q60).** As decided, Product forward, Quiet stage and Only what's for sale. Your own settings can be saved as presets.
 - **Auto split.** Each photo splits itself into parts as it's added, one after another. A subject model finds the foreground, a small detector finds people, and Segment Anything completes them. Long thin pieces such as blades become the product, and skin is found by colour.
+- **Parts maps.** A photo's parts can come from your own painting instead. A map is an image of the photo, any size of the same shape, with the parts painted in colours of your own: either a copy of the photo painted over, or a layer of its own with the rest transparent.
+  - The tool finds each colour and guesses its part: red the product, blue generic gear, orange to yellow skin, violet steel, green the background. A mid grey is steel. Black and white alone are a subject mask, the lighter part the product.
+  - Change any colour's part in Parts. Your choice holds for every map in the batch, and is kept for next time.
+  - What isn't painted is background, or goes to the auto split.
+  - The map's edges snap to the photo's, unless you turn that off.
+  - To add maps with their photos, name each after its photo with -mask, -parts or -map (gloves-mask.png for gloves.jpg). To give a photo a map with another name, load it in Parts with that photo on screen.
+  - Photos without a map split automatically, as before.
 - **Editing the parts.** Brush; lasso, placed point by point (click the first point, double-click or press Enter to fill); click to select (Segment Anything). Each has snap-to-edges, and every change can be undone.
 - **Saving.** Each photo is saved at its own size, printed from the original file in tiles, so story ink's grain stays crisp. JPEG, PNG or WebP. Save all puts the batch in one .zip.
 - **Kept in your browser.** The batch, with every photo's parts, stays in this browser until you remove it. A project (`.tuned.zip`) holds the whole batch, its parts and the settings, to move or back up.
-- **Photos from a web page.** Samples has a button to drag to your bookmarks bar. On a page with photos, click the bookmark, tick the photos and send them here. They stay in your browser.
 - **The side panel** can be made wider or narrower by dragging its edge.
 
 The first split downloads 100 to 140 MB of models from Hugging Face, and the browser keeps them for next time. Where WebGPU is available, the split runs on the graphics card and takes a few seconds a photo. Otherwise, or if the graphics card can't run a model, it runs on the processor and is slower. The models run in a background worker, so the page stays responsive.
@@ -63,13 +69,13 @@ Plain HTML, CSS and JavaScript modules, with no build step. GitHub Pages serves 
 - `tuner/print.js`: printing at any size in tiles (the grain comes from each pixel's position, so tiles join without seams), for saving and for the batch's previews.
 - `tuner/editor.js`: the viewport, the parts overlay, the brush, lasso and click tools, the compare line, and undo.
 - `tuner/parts.js`: the parts and their colours.
+- `tuner/partsmap.js`: parts maps: finding the colours painted, guessing their parts, and turning them into the parts.
 - `tuner/app.js`: the interface, the batch, saving and projects.
 - `tuner/store.js`: the batch kept in the browser (IndexedDB), each photo's parts compressed.
 - `tuner/zip.js`: a small zip writer and reader for Save all and projects.
 - `shared/segment.js`: the auto split and click to select.
 - `shared/ml-worker.js` and `shared/models.js`: the models, run in a worker. If the graphics card fails, the worker is restarted on the processor.
 - `shared/imgproc.js`: filters, morphology, colour conversions, grain.
-- `shared/grab.js`: the bookmark that sends a web page's photos to the tuner.
 
 The engine follows the recipes in the project's decisions doc (24 Oct 2026, D116 and D121) number for number.
 

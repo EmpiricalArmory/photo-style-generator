@@ -135,6 +135,21 @@ input[type=color] { width: 36px; height: 30px; border: 1px solid var(--line-stro
 .mini { font: 500 16px var(--cabin); background: none; border: 0; color: var(--faded); text-decoration: underline; cursor: pointer; padding: 2px 0; }
 .adv { display: grid; gap: 6px; padding: 2px 0 2px 2px; }
 .adv .bgopts { display: grid; gap: 8px; border-top: 1px dashed var(--line-strong); margin-top: 6px; padding-top: 10px; }
+/* a parts map: its colours, each with its part */
+.mapbox { display: grid; gap: 6px; padding: 8px 0 10px; border-top: 1px dashed var(--line-strong); border-bottom: 1px dashed var(--line-strong); margin: 4px 0; }
+.maphead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.maphead .lab { flex: 1; }
+#btnMapLoad[aria-disabled='true'] { opacity: 0.45; pointer-events: none; }
+.mapon { display: grid; gap: 8px; }
+.mapon .note { padding: 0; }
+.mapkey { display: grid; gap: 6px; }
+.mk { display: grid; grid-template-columns: 26px 42px minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.mk .sw { width: 26px; height: 26px; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(31, 27, 22, 0.3); }
+.mk .pct { color: var(--faded); font-variant-numeric: tabular-nums; text-align: right; }
+.mk select { font: 500 16px var(--cabin); color: var(--ink); background: #fff; border: 1px solid var(--line-strong); border-radius: 8px; padding: 6px 8px; min-height: 36px; min-width: 0; }
+.mk .from { color: var(--faded); font-size: 15px; }
+.row.tight { padding: 2px 0; }
+.thumb .tb[data-s='map'] { background: var(--ink); }
 .presets { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .presets li { display: flex; align-items: center; gap: 8px; }
 .presets li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -151,10 +166,6 @@ dialog:has(.dlg.small) { max-width: 440px; }
 .samplegrid .t { font: 500 16px var(--cabin); }
 .samplegrid .c { font-size: 16px; color: var(--faded); }
 .samplegrid .c a { color: var(--faded); }
-.fromweb { border-top: 1px solid var(--line); padding-top: 14px; display: grid; gap: 8px; }
-.fromweb h3 { font-size: 26px; }
-.fromweb p { font-size: 16px; max-width: 46em; }
-#grabLink { cursor: grab; }
 
 @media (max-width: 900px) {
   body { overflow: auto; height: auto; display: block; }

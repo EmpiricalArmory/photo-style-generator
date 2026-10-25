@@ -66,7 +66,7 @@
         <div class="empty" id="empty">
           <h2>Drop photos here</h2>
           <p>or <label class="link">add some<input type="file" id="fileInput2" accept="image/*" multiple hidden></label>, or try the <button type="button" class="link" id="btnSamples2">samples</button>.</p>
-          <p class="small">Add as many as you like: they print with one set of settings, each with its own parts.<br>Everything happens in this browser, and your photos stay in it until you remove them.</p>
+          <p class="small">Add as many as you like: they print with one set of settings, each with its own parts.<br>Parts maps you’ve painted go with their photos by name: gloves-mask.png for gloves.jpg.<br>Everything happens in this browser, and your photos stay in it until you remove them.</p>
         </div>
       </div>
       <div class="grid" id="grid" hidden role="listbox" aria-label="The batch" tabindex="0"></div>
@@ -89,6 +89,28 @@
       <div class="row" id="rowWhole" hidden>
         <span class="lab">The whole subject is</span>
         <div class="btns"><button class="btn small" type="button" data-whole="gear"><span class="dot" data-part="gear"></span>Product</button><button class="btn small" type="button" data-whole="kit"><span class="dot" data-part="kit"></span>Generic gear</button></div>
+      </div>
+      <div class="mapbox" id="mapBox">
+        <div class="maphead">
+          <span class="lab">Parts map</span>
+          <label class="btn small" id="btnMapLoad" title="An image of this photo with its parts painted in colours of your own"><span class="t">Load a map…</span><input type="file" id="mapInput" accept="image/*" multiple hidden></label>
+          <button class="mini" type="button" id="btnMapRemove" hidden>Remove</button>
+        </div>
+        <p class="hint" id="mapHint">Paint the parts on a copy of the photo, in any colours, and load it here: its parts then come from your painting. What you leave unpainted is background. To add maps with their photos, name each after its photo with -mask (gloves-mask.png for gloves.jpg).</p>
+        <div class="mapon" id="mapOn" hidden>
+          <p class="note" id="mapInfo"></p>
+          <div class="mapkey" id="mapKey" role="table" aria-label="The map’s colours and their parts"></div>
+          <div class="row tight" id="rowUnmarked">
+            <span class="lab">Not painted</span>
+            <div class="seg" id="segUnmarked" role="group" aria-label="What isn’t painted">
+              <button type="button" data-v="place" aria-pressed="true">Background</button>
+              <button type="button" data-v="auto" aria-pressed="false">The auto split</button>
+            </div>
+          </div>
+          <label class="chk"><input type="checkbox" id="chkMapSnap" checked> Snap the map’s edges to the photo’s</label>
+          <div class="btns"><button class="btn small" type="button" id="btnMapApply" hidden>Re-apply the map</button></div>
+          <p class="hint">Each colour’s part, Not painted and Snap hold for every photo’s map.</p>
+        </div>
       </div>
       <div class="row">
         <span class="lab">Paint</span>
@@ -214,12 +236,6 @@
     <div class="dlghead"><h2 id="samplesTitle">Samples</h2><button class="btn small" value="close">Close</button></div>
     <p class="hint">Openly licensed stand-ins, to try the tool before your own photos. <button type="button" class="link" id="btnAllSamples">Add all five</button></p>
     <div class="samplegrid" id="sampleGrid"></div>
-    <div class="fromweb">
-      <h3>Photos from a web page</h3>
-      <p>To try the inks on photos from another site, drag this button to your browser’s bookmarks bar:</p>
-      <p><a class="btn" id="grabLink" href="#">Send photos to Tuned by part</a></p>
-      <p class="hint">Then, on a page with photos, click that bookmark, tick the photos you want and press Send. They open here and stay in this browser only; nothing is published. Where no new tab opens (an app’s own browser), press Save as a zip and drop the zip here. A site’s own photos are theirs: use them to compare, not on your pages.</p>
-    </div>
   </form>
 </dialog>
 

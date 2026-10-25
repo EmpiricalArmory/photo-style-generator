@@ -7,10 +7,11 @@ import { GLRenderer } from './gl.js';
 import { Editor, softenMask, paintOverlay } from './editor.js';
 import { PARTS, PART } from './parts.js';
 import { autoSplit, SmartSelect, skinWithin } from '../shared/segment.js';
-import { drawScaled, toU8, toF32 } from '../shared/imgproc.js';
+import { drawScaled, toU8, toF32, srgb255ToLab, hexToRgb } from '../shared/imgproc.js';
 import { renderPrint, maskCanvases } from './print.js';
 import { makeZip, readZip } from './zip.js';
 import * as store from './store.js';
+import { analyseMap, partsFor, setKey, masksFromMap, photoKeyOfMap, photoKeyOf } from './partsmap.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -33,6 +34,9 @@ const merge = (base, over) => { if (!isObj(over)) return base; for (const k of O
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 const ui0 = ls.get(LS_UI, {});
+const PART_SET = ['gear', 'kit', 'skin', 'steel', 'place'];
+function cleanKey(k) { return Array.isArray(k) ? k.filter((e) => e && /^#[0-9A-F]{6}$/i.test(e.hex) && PART_SET.includes(e.part)).slice(0, 64).map((e) => ({ hex: e.hex.toUpperCase(), part: e.part })) : []; }
+function cleanMapOpts(o) { return { unmarked: o?.unmarked === 'auto' ? 'auto' : 'place', snap: o?.snap !== false }; }
 const S = {
   params: merge(defaultParams(), ls.get(LS_PARAMS, {})),
   items: [], cur: null, E: null, stats: null, work: null, lastF: null, imageKey: 0, token: 0,
@@ -44,9 +48,11 @@ const S = {
   panelW: +ui0.panelW || 392,
   autoSplit: ui0.autoSplit !== false,
   exp: { format: ['jpeg', 'png', 'webp'].includes(ui0.exp?.format) ? ui0.exp.format : 'jpeg', quality: Math.max(0.5, Math.min(1, +ui0.exp?.quality || 0.88)) },
+  // parts maps: your colour key (a part for each colour you chose one for) and what the maps' unpainted areas are
+  mapKey: cleanKey(ui0.mapKey), mapOpts: cleanMapOpts(ui0.mapOpts), mapQueue: [], mapRunning: false, applyingMap: false, mapDone: null,
 };
 S.params.wb.pick = null; // a picked grey belongs to its photo now
-const saveUI = () => ls.set(LS_UI, { view: S.view, show: S.show, tile: S.tile, panelW: S.panelW, autoSplit: S.autoSplit, exp: S.exp });
+const saveUI = () => ls.set(LS_UI, { view: S.view, show: S.show, tile: S.tile, panelW: S.panelW, autoSplit: S.autoSplit, exp: S.exp, mapKey: S.mapKey, mapOpts: S.mapOpts });
 
 // ---------- status line ----------
 const statusEl = $('#status');
@@ -134,6 +140,7 @@ editor.onHistory = () => { $('#btnUndo').disabled = !editor.undoStack.length; $(
 // the current photo's parts changed: keep them (packed, after a pause) and refresh its preview
 const partsChanged = (it) => {
   if (!it) return;
+  if (it.map && !S.applyingMap && !it.map.edited) { it.map.edited = true; if (it === S.cur) showMapUI(); }
   it.maskVersion++; it.smallMasks = null; it.overlaySmall = null; it.partsDirty = true;
   clearTimeout(it._ft); it._ft = setTimeout(() => flushParts(it), 1500);
   schedulePreviews(900);
@@ -149,7 +156,7 @@ const flushParts = async (it) => {
 
 // ---------- the batch: photos ----------
 const SMALL = 720; // the previews' long side
-const mem = () => ({ small: null, maskVersion: 0, smallMasks: null, overlaySmall: null, preview: null, previewKey: '', undo: [], redo: [], partsDirty: false, packing: null, els: null });
+const mem = () => ({ small: null, maskVersion: 0, smallMasks: null, overlaySmall: null, preview: null, previewKey: '', undo: [], redo: [], partsDirty: false, packing: null, els: null, mapRead: null });
 const makeItem = async (blob, name) => {
   const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' });
   const srcW = bmp.width, srcH = bmp.height;
@@ -161,17 +168,18 @@ const makeItem = async (blob, name) => {
   const Es = createState(ctx2d(small).getImageData(0, 0, smallW, smallH).data, smallW, smallH);
   return {
     id: newId(), name: name || 'photo', blob, type: blob.type || '', srcW, srcH, workW, workH, smallW, smallH, smallBlob,
-    outName: slug(name), masksBlob: null, analysis: computeAnalysis(Es), analysisSize: 'small',
+    outName: slug(name), masksBlob: null, autoBlob: null, map: null, analysis: computeAnalysis(Es), analysisSize: 'small',
     split: { status: 'none', note: '', people: 0 }, wbPick: null, wbPickMed: null, ...mem(), small,
   };
 };
 const recordOf = (it) => ({
   id: it.id, rev: it.rev || 0, name: it.name, blob: it.blob, type: it.type, srcW: it.srcW, srcH: it.srcH, workW: it.workW, workH: it.workH,
-  smallW: it.smallW, smallH: it.smallH, smallBlob: it.smallBlob, outName: it.outName, masksBlob: it.masksBlob,
+  smallW: it.smallW, smallH: it.smallH, smallBlob: it.smallBlob, outName: it.outName, masksBlob: it.masksBlob, autoBlob: it.autoBlob || null,
+  map: it.map ? { blob: it.map.blob, name: it.map.name, type: it.map.type, colours: it.map.colours, mode: it.map.mode, unmarked: it.map.unmarked, edited: !!it.map.edited } : null,
   analysis: it.analysis, analysisSize: it.analysisSize, wbPick: it.wbPick, wbPickMed: it.wbPickMed,
   split: { status: it.split.status === 'done' || it.split.status === 'error' ? it.split.status : 'none', note: it.split.note, people: it.split.people },
 });
-const itemFromRecord = (r) => ({ ...r, split: { ...r.split }, ...mem(), stored: true });
+const itemFromRecord = (r) => ({ autoBlob: null, map: null, ...r, split: { ...r.split }, ...mem(), stored: true });
 let storeWarned = false;
 const storeFailed = (e) => { console.warn(e); if (!storeWarned) { storeWarned = true; status('This browser couldn’t keep the batch (its storage is full or blocked). Save a project to keep your work.', 'err'); } };
 // a photo is kept at once when it's new, and after a short pause when it changes (and whenever the page is hidden)
@@ -188,10 +196,16 @@ const isImage = (b, name) => (b.type && b.type.startsWith('image/')) || IMG_RE.t
 const addPhotos = async (list, { gearMask = null, open = true } = {}) => {
   const files = list.filter((f) => f && f.blob && isImage(f.blob, f.name));
   if (!files.length) { if (list.length) status('Those files aren’t photos.', 'err'); return []; }
+  // parts maps among them: named after a photo here or in the batch, with -mask, -parts or -map (gloves-mask.png for
+  // gloves.jpg); one named so with no such photo is a photo after all
+  const keysHere = new Set(files.filter((f) => !photoKeyOfMap(f.name)).map((f) => photoKeyOf(f.name)));
+  const inBatch = (k) => S.items.some((it) => photoKeyOf(it.name) === k);
+  const maps = [], photos = [];
+  for (const f of files) { const k = photoKeyOfMap(f.name); if (k && (keysHere.has(k) || inBatch(k))) maps.push({ ...f, key: k }); else photos.push(f); }
   const added = [];
-  for (let k = 0; k < files.length; k++) {
-    const f = files[k];
-    status(files.length > 1 ? `Adding ${k + 1} of ${files.length}: ${f.name}…` : `Opening ${f.name}…`, 'busy');
+  for (let k = 0; k < photos.length; k++) {
+    const f = photos[k];
+    status(photos.length > 1 ? `Adding ${k + 1} of ${photos.length}: ${f.name}…` : `Opening ${f.name}…`, 'busy');
     try {
       const it = await makeItem(f.blob, f.name);
       if (gearMask) it.pendingGear = gearMask;
@@ -199,11 +213,21 @@ const addPhotos = async (list, { gearMask = null, open = true } = {}) => {
     } catch (e) { console.error(e); status(`${f.name} couldn’t be opened as a photo${e.message ? ' (' + e.message + ')' : ''}.`, 'err'); await new Promise((r) => setTimeout(r, 1200)); }
     await yieldToPage();
   }
-  if (!added.length) return added;
-  saveOrder(); updateBatchUI();
-  if (open || !S.cur) await activate(added[0]);
-  if (S.autoSplit) added.forEach((it) => queueSplit(it));
-  else status(added.length > 1 ? `Added ${plural(added.length, 'photo')}.` : `${added[0].name}: ${added[0].srcW} × ${added[0].srcH} px.`);
+  // each map to its photo: one just added, or else the latest in the batch of that name
+  let paired = 0;
+  for (const m of maps) {
+    const it = added.find((i) => photoKeyOf(i.name) === m.key) || [...S.items].reverse().find((i) => photoKeyOf(i.name) === m.key);
+    if (it) { attachMap(it, m.blob, m.name, { run: false }); paired++; }
+  }
+  if (!added.length && !paired) return added;
+  if (added.length) { saveOrder(); updateBatchUI(); }
+  if (added.length && (open || !S.cur)) await activate(added[0]);
+  if (paired) runMapQueue(); // the photo on screen first
+  const toSplit = S.autoSplit ? added.filter((it) => !it.map) : [];
+  toSplit.forEach((it) => queueSplit(it));
+  const odd = photos.filter((f) => photoKeyOfMap(f.name)).map((f) => f.name);
+  if (odd.length) status(`${odd.join(', ')} matched no photo by name, so ${odd.length === 1 ? 'it was' : 'they were'} added as ${odd.length === 1 ? 'a photo' : 'photos'}. To use one as a photo’s parts map, open the photo and load it in Parts.`);
+  else if (!toSplit.length && !paired) status(added.length > 1 ? `Added ${plural(added.length, 'photo')}.` : `${added[0].name}: ${added[0].srcW} × ${added[0].srcH} px.`);
   schedulePreviews();
   return added;
 };
@@ -249,6 +273,7 @@ const stash = (it) => {
     it.packing = p; p.then((b) => { it.masksBlob = b; if (it.packing === p) it.packing = null; persist(it); });
   }
   editor.cancelPoly(); editor.picking = false; $('#viewport').classList.remove('picking');
+  it.mapRead = null;
 };
 const showPhotoUI = () => {
   const it = S.cur, on = !!it;
@@ -259,7 +284,16 @@ const showPhotoUI = () => {
   showSplitNote(); updateNav();
 };
 const showSplitNote = () => {
-  const it = S.cur, b = $('#btnSplit');
+  const it = S.cur, b = $('#btnSplit'), note = $('#splitNote');
+  showMapUI();
+  if (it && it.map) { // the parts come from the map
+    const st = it.split.status;
+    b.hidden = true; $('#rowWhole').hidden = true;
+    note.textContent = st === 'running' || st === 'queued' ? 'The auto split is running for the areas the map leaves unpainted.' : '';
+    note.hidden = !note.textContent;
+    return;
+  }
+  b.hidden = false; note.hidden = false;
   if (!it) { b.disabled = true; b.textContent = 'Split this photo'; $('#splitNote').textContent = SPLIT_NOTE; $('#rowWhole').hidden = true; return; }
   const st = it.split.status;
   $('#splitNote').textContent = st === 'done' || st === 'error' ? it.split.note : st === 'running' ? 'Splitting this photo…' : st === 'queued' ? 'Waiting to be split, after the photos before it.' : SPLIT_NOTE;
@@ -276,6 +310,9 @@ const clearView = () => {
 
 // ---------- the batch: splitting, one photo at a time ----------
 const noteFor = (res) => (res.boxes.length ? res.notes.join(' ') : 'No people found, so the whole subject is the product. ' + res.notes.join(' ')).trim() + ' Check the Parts view and paint where it’s wrong.';
+// whether a photo still needs the auto split: without a map, when photos split as they're added; with one, only
+// when its unpainted areas go to the split and it has none yet
+const needsSplit = (it) => it.split.status === 'none' && (it.map ? S.mapOpts.unmarked === 'auto' && !it.autoBlob && (it.map.unmarked ?? 1) > 0 : S.autoSplit);
 const queueSplit = (it, front = false) => {
   if (it.split.status === 'running' || S.queue.includes(it)) return;
   it.split.status = 'queued'; updateBadge(it); if (it === S.cur) showSplitNote();
@@ -321,7 +358,10 @@ const splitItem = async (it) => {
     const masks = { G: toU8(res.G), P: toU8(res.P), S: toU8(res.S), ST: new Uint8Array(E.n), F: toU8(res.F) };
     if (it.pendingGear) { mergeGear(masks, it.pendingGear, it.workW, it.workH); delete it.pendingGear; }
     it.split = { status: 'done', note: noteFor(res), people: res.boxes.length };
-    if (S.cur === it && S.E) { // on screen now (it may have been opened while it was being split): undoable
+    it.autoBlob = await store.packMasks(masks, E.n); // kept: a parts map's unpainted areas can take them
+    if (it.map) { // the map decides; the split fills only what it leaves unpainted (if that's chosen)
+      try { await applyMap(it, { E }); } catch (e) { mapFailed(it, e); }
+    } else if (S.cur === it && S.E) { // on screen now (it may have been opened while it was being split): undoable
       S.lastF = masks.F;
       editor.setMasks({ G: masks.G, P: masks.P, S: masks.S, ST: masks.ST }, 'Split the photo');
     } else {
@@ -350,6 +390,159 @@ const applyPendingGear = (it) => {
   const m = { G: new Uint8Array(S.E.n), P: Uint8Array.from(S.E.masks.P) };
   mergeGear(m, it.pendingGear, it.workW, it.workH); delete it.pendingGear;
   editor.setMasks({ G: m.G, P: m.P }, 'The generator’s product');
+};
+
+// ---------- parts maps: a photo's parts painted by you, in colours of your own ----------
+const PART_NAMES = Object.fromEntries(PARTS.map((p) => [p.id, p.label]));
+const mapColours = (it, n) => (it.map.colours || []).map((c) => { const rgb = hexToRgb(c.hex); return { rgb, hex: c.hex, lab: srgb255ToLab(rgb), share: c.share, count: c.share * n }; });
+// the map read at the photo's working size, against the photo there (to tell what was left as the photo)
+const readMapFor = async (it, photoRGBA) => {
+  const bmp = await createImageBitmap(it.map.blob, { imageOrientation: 'from-image' });
+  try {
+    const mw = bmp.width, mh = bmp.height;
+    if (Math.abs(mw * it.srcH - mh * it.srcW) > 0.02 * mh * it.srcW) throw new Error(`its shape isn’t the photo’s: the map is ${mw} × ${mh} px, the photo ${it.srcW} × ${it.srcH}`);
+    const w = it.workW, h = it.workH, c = canvasOf(w, h), g = ctx2d(c);
+    g.imageSmoothingEnabled = false; g.drawImage(bmp, 0, 0, w, h); // the colours exactly as painted
+    const near = g.getImageData(0, 0, w, h).data;
+    const smooth = mw === w && mh === h ? near : ctx2d(drawScaled(bmp, mw, mh, w, h)).getImageData(0, 0, w, h).data; // scaled as the photo was
+    const rd = analyseMap({ near, smooth, photo: photoRGBA, w, h });
+    if (rd.error) throw new Error(rd.error);
+    return rd;
+  } finally { bmp.close?.(); }
+};
+// the photo's parts from its map (undoable when it's on screen); E: its working state, if already at hand
+const applyMap = async (it, { E = null, label = 'The parts map' } = {}) => {
+  if (!it.map) return;
+  const onScreen = it === S.cur && S.E;
+  if (onScreen) E = S.E; else if (!E) ({ E } = await workingState(it));
+  let rd = it.mapRead;
+  if (!rd) { rd = await readMapFor(it, E.rgba); if (it === S.cur) it.mapRead = rd; }
+  if (!it.map) return; // removed meanwhile
+  it.map.colours = rd.colours.map((c) => ({ hex: c.hex, share: c.share })); it.map.mode = rd.mode; it.map.unmarked = rd.unmarked;
+  const parts = partsFor(rd.colours, S.mapKey, E.n).map((p) => p.part);
+  let auto = null;
+  if (S.mapOpts.unmarked === 'auto' && rd.unmarked > 0) {
+    if (it.autoBlob) auto = await store.unpackMasks(it.autoBlob, E.n);
+    else if (it.split.status !== 'running' && it.split.status !== 'error' && !S.queue.includes(it)) { it.split.status = 'none'; queueSplit(it); } // then this runs again
+  }
+  const m = masksFromMap({ labels: rd.labels, parts, w: E.w, h: E.h, unmarked: S.mapOpts.unmarked, auto, Ly: S.mapOpts.snap ? E.Ly : null });
+  it.map.edited = false; it.mapPrev = null;
+  if (S.cur === it && S.E) { // on screen (perhaps opened meanwhile): undoable
+    S.lastF = m.F; S.applyingMap = true;
+    try { editor.setMasks({ G: m.G, P: m.P, S: m.S, ST: m.ST }, label); } finally { S.applyingMap = false; }
+  } else {
+    for (const k of ['G', 'P', 'S', 'ST']) E.masks[k].set(m[k]);
+    if (!E.wbMed) E.wbMed = wbAutoMed(E);
+    it.analysis = computeAnalysis(E, E.wbMed); it.analysisSize = 'work';
+    const pk = store.packMasks(m, E.n); it.packing = pk; it.masksBlob = await pk; if (it.packing === pk) it.packing = null;
+    it.maskVersion++; it.smallMasks = null; it.overlaySmall = null; it.undo = []; it.redo = [];
+  }
+  updateBadge(it); if (it === S.cur) showSplitNote(); persist(it); schedulePreviews(400);
+};
+// a map that can't be used is taken off its photo: the map it replaced comes back, or else the photo splits as it
+// would have
+const mapFailed = (it, e) => {
+  console.error(e);
+  const name = it.map ? it.map.name : 'The map', prev = it.mapPrev;
+  it.map = prev || null; it.mapPrev = null; it.mapRead = null; persist(it); updateBadge(it);
+  if (it === S.cur) showSplitNote();
+  status(`${name} couldn’t be used as ${it.name}’s parts map: ${e.message || e}.${prev ? ` ${prev.name} stays.` : ''}`, 'err');
+  if (!prev && needsSplit(it)) queueSplit(it);
+};
+const queueMap = (it) => { if (!S.mapQueue.includes(it)) S.mapQueue.push(it); };
+const runMapQueue = async () => {
+  if (S.mapRunning) return;
+  S.mapRunning = true;
+  let n = 0;
+  try {
+    while (S.mapQueue.length) {
+      let i = S.mapQueue.indexOf(S.cur); if (i < 0) i = 0; // the photo on screen first
+      const it = S.mapQueue.splice(i, 1)[0];
+      if (!S.items.includes(it) || !it.map) continue;
+      if (S.mapQueue.length || n) status(`Applying parts maps: ${it.name}…`, 'busy');
+      try { await applyMap(it); n++; } catch (e) { mapFailed(it, e); }
+      await yieldToPage();
+    }
+  } finally { S.mapRunning = false; }
+  const msg = S.mapDone; S.mapDone = null;
+  if (msg) status(msg);
+  else if (n && !S.queueRunning) status(n > 1 ? `${plural(n, 'parts map')} applied. Check them in the Parts view.` : `${S.cur && S.cur.map ? S.cur.map.name + ': ' : ''}parts from the map. Check them in the Parts view.`);
+};
+const attachMap = (it, blob, name, { run = true } = {}) => {
+  if (it.map && !it.mapPrev) it.mapPrev = it.map; // kept until the new one works
+  it.map = { blob, name: name || 'map', type: blob.type || '', colours: [], mode: '', unmarked: 0, edited: false };
+  it.mapRead = null;
+  // a split waiting for this photo isn't needed now, unless the unpainted areas are to take it
+  if (S.queue.includes(it) && !(S.mapOpts.unmarked === 'auto' && !it.autoBlob)) { S.queue = S.queue.filter((x) => x !== it); it.split.status = 'none'; }
+  updateBadge(it); persist(it); if (it === S.cur) showSplitNote();
+  queueMap(it); if (run) runMapQueue();
+};
+const removeMap = async (it) => {
+  if (!it || !it.map) return;
+  it.map = null; it.mapRead = null; S.mapQueue = S.mapQueue.filter((x) => x !== it);
+  const onScreen = it === S.cur && S.E;
+  // back to the auto split's parts where there are any; otherwise split now, or start from no parts
+  if (it.autoBlob) {
+    const m = await store.unpackMasks(it.autoBlob, it.workW * it.workH);
+    if (onScreen) { S.lastF = m.F; editor.setMasks({ G: m.G, P: m.P, S: m.S, ST: m.ST }, 'Remove the parts map'); }
+    else { it.masksBlob = it.autoBlob; it.maskVersion++; it.smallMasks = null; it.overlaySmall = null; }
+    it.split.status = 'done';
+  } else {
+    const waiting = S.queue.includes(it) || it.split.status === 'running';
+    if (!waiting) it.split.status = 'none';
+    if (onScreen && !waiting && !S.autoSplit) { const z = () => new Uint8Array(S.E.n); S.lastF = null; editor.setMasks({ G: z(), P: z(), S: z(), ST: z() }, 'Remove the parts map'); }
+    if (S.autoSplit && !waiting) queueSplit(it, true);
+  }
+  updateBadge(it); if (it === S.cur) showSplitNote(); persist(it); schedulePreviews();
+  status(`The parts map is off ${it.name}.${it.autoBlob ? ' Its parts are the auto split’s again.' : S.autoSplit ? ' It’s being split.' : ''}`);
+};
+// after a change to the key or the options: every map again (those painted over by hand are left, except the one on screen)
+// done(left) gives the line to show when they're through
+const reapplyMaps = (only = null, done = null) => {
+  let left = 0, n = 0;
+  for (const it of S.items) {
+    if (!it.map || (only && !only(it))) continue;
+    if (it.map.edited && it !== S.cur) { left++; continue; }
+    if (it !== S.cur) it.mapRead = null;
+    queueMap(it); n++;
+  }
+  const msg = done ? done(left, n) : null;
+  if (msg) { if (n) S.mapDone = msg; else status(msg); }
+  runMapQueue();
+  return left;
+};
+const keptLine = (left) => (left ? `${plural(left, 'photo')} painted by hand since ${left === 1 ? 'its map was' : 'their maps were'} applied kept ${left === 1 ? 'its' : 'their'} parts: Re-apply on ${left === 1 ? 'it' : 'each'} to use the change.` : '');
+// the Parts card's map section, for the photo on screen
+const MODE_NOTE = { layer: 'left transparent', over: 'left as the photo' };
+const showMapUI = () => {
+  const it = S.cur, on = !!(it && it.map);
+  $('#mapInput').disabled = !it; $('#btnMapLoad').setAttribute('aria-disabled', String(!it));
+  $('#btnMapLoad .t').textContent = on ? 'Replace…' : 'Load a map…';
+  $('#btnMapRemove').hidden = !on; $('#mapHint').hidden = on; $('#mapOn').hidden = !on;
+  if (!on) return;
+  const n = it.workW * it.workH, cols = mapColours(it, n), parts = partsFor(cols, S.mapKey, n), m = it.map;
+  const un = Math.round((m.unmarked || 0) * 100), where = S.mapOpts.unmarked === 'auto' ? 'go to the auto split' : 'are background';
+  $('#mapInfo').textContent = !cols.length ? `${m.name}: reading it…`
+    : `${m.name}${m.mode === 'over' ? ', painted over the photo' : ''}: ${plural(cols.length, 'colour')}` + (m.mode === 'flat' || !un ? ', covering the whole photo.' : `; the ${un}% ${MODE_NOTE[m.mode] || 'unpainted'} ${where}.`)
+      + (m.edited ? ' You’ve painted the parts since; Re-apply puts the map’s back.' : '');
+  const box = $('#mapKey'), sig = it.id + '|' + cols.map((c, k) => `${c.hex}:${c.share.toFixed(3)}:${parts[k].part}:${parts[k].from}`).join(',');
+  if (box.dataset.sig !== sig) { box.dataset.sig = sig; box.innerHTML = ''; } else cols.length = 0;
+  cols.forEach((c, k) => {
+    const row = document.createElement('div'); row.className = 'mk'; row.setAttribute('role', 'row');
+    row.innerHTML = `<span class="sw" style="background:${c.hex}" title="${c.hex}"></span><span class="pct">${c.share >= 0.01 ? Math.round(c.share * 100) : '<1'}%</span><select aria-label="The part painted ${c.hex}">${PARTS.map((p) => `<option value="${p.id}">${p.label}</option>`).join('')}</select><span class="from">${parts[k].from === 'guess' ? 'guessed' : ''}</span>`;
+    const sel = row.querySelector('select'); sel.value = parts[k].part;
+    sel.addEventListener('change', () => {
+      S.mapKey = setKey(S.mapKey, c.rgb, sel.value); saveUI();
+      const lab = c.lab, hit = (x) => mapColours(x, x.workW * x.workH).some((d) => (d.lab[0] - lab[0]) ** 2 + (d.lab[1] - lab[1]) ** 2 + (d.lab[2] - lab[2]) ** 2 < 18 * 18);
+      const others = S.items.filter((x) => x !== it && x.map && hit(x)).length;
+      reapplyMaps(hit, (left) => `${c.hex} is ${PART_NAMES[sel.value]} now${others ? `, on the maps of ${plural(others + 1, 'photo')}` : ''}. ${keptLine(left)}`.trim());
+      showMapUI();
+    });
+    box.appendChild(row);
+  });
+  $('#rowUnmarked').hidden = m.mode === 'flat';
+  pressSeg($('#segUnmarked'), S.mapOpts.unmarked); $('#chkMapSnap').checked = S.mapOpts.snap;
+  $('#btnMapApply').hidden = !m.edited;
 };
 
 // ---------- the batch: previews for the grid and the strip ----------
@@ -476,8 +669,10 @@ const buildItemEls = (it) => {
 };
 const updateBadge = (it) => {
   if (!it.els) return;
-  const s = it.split.status;
-  it.els.badge.textContent = BADGE[s] || ''; it.els.badge.classList.toggle('err', s === 'error'); it.els.tb.dataset.s = s;
+  const s = it.split.status, busy = s === 'queued' || s === 'running', mapped = !!it.map;
+  it.els.badge.textContent = busy ? BADGE[s] : mapped ? 'Map' : BADGE[s] || '';
+  it.els.badge.classList.toggle('err', !busy && !mapped && s === 'error');
+  it.els.tb.dataset.s = busy ? s : mapped ? 'map' : s;
 };
 const selectEls = (it) => {
   for (const x of S.items) { if (!x.els) continue; const on = x === it; x.els.tile.setAttribute('aria-selected', String(on)); x.els.thumb.setAttribute('aria-selected', String(on)); }
@@ -629,13 +824,19 @@ const saveProject = async () => {
   try {
     if (S.cur) await flushParts(S.cur);
     for (const it of S.items) if (it.packing) await it.packing;
-    const meta = { app: 'ea-tuned-by-part', version: 2, saved: new Date().toISOString(), params: S.params, current: S.items.indexOf(S.cur), items: [] }, files = [];
+    const meta = { app: 'ea-tuned-by-part', version: 2, saved: new Date().toISOString(), params: S.params, maps: { key: S.mapKey, opts: S.mapOpts }, current: S.items.indexOf(S.cur), items: [] }, files = [];
     for (const it of S.items) {
       const ext = ((it.name.match(/\.([a-z0-9]{2,5})$/i) || [])[1] || it.type.split('/')[1] || 'jpg').toLowerCase();
       const photo = `photos/${it.id}.${ext}`, parts = it.masksBlob ? `parts/${it.id}.bin` : null;
       files.push({ name: photo, blob: it.blob });
       if (parts) files.push({ name: parts, blob: it.masksBlob });
-      meta.items.push({ name: it.name, type: it.type, outName: it.outName, split: it.split.status === 'done' || it.split.status === 'error' ? it.split : { status: 'none', note: '', people: 0 }, wbPick: it.wbPick, wbPickMed: it.wbPickMed, photo, parts, partsType: it.masksBlob ? it.masksBlob.type : null });
+      let map = null;
+      if (it.map) {
+        const mext = ((it.map.name.match(/\.([a-z0-9]{2,5})$/i) || [])[1] || (it.map.type.split('/')[1]) || 'png').toLowerCase();
+        map = { file: `maps/${it.id}.${mext}`, name: it.map.name, type: it.map.type, colours: it.map.colours, mode: it.map.mode, unmarked: it.map.unmarked, edited: !!it.map.edited };
+        files.push({ name: map.file, blob: it.map.blob });
+      }
+      meta.items.push({ name: it.name, type: it.type, outName: it.outName, split: it.split.status === 'done' || it.split.status === 'error' ? it.split : { status: 'none', note: '', people: 0 }, wbPick: it.wbPick, wbPickMed: it.wbPickMed, photo, parts, partsType: it.masksBlob ? it.masksBlob.type : null, map });
     }
     files.unshift({ name: 'project.json', blob: new Blob([JSON.stringify(meta, null, 1)], { type: 'application/json' }) });
     const name = `${S.items.length === 1 ? slug(S.items[0].name) : 'tuned-batch'}-${new Date().toISOString().slice(0, 10)}.tuned.zip`;
@@ -653,7 +854,7 @@ const openProject = async (file) => {
   try {
     if (/\.json$/i.test(file.name) || file.type === 'application/json') { await openOldProject(file); return; }
     const zip = await readZip(file), pj = zip.get('project.json');
-    if (!pj) { // a zip of photos (the send-photos bookmark saves one): add them
+    if (!pj) { // a zip of photos (and any parts maps among them): add them
       const names = [...zip.keys()].filter((n) => IMG_RE.test(n) && !n.startsWith('__MACOSX/')).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
       if (!names.length) throw new Error('there are no photos or project in it');
       const list = []; for (const n of names) list.push({ blob: await zip.get(n)(), name: n.split('/').pop() });
@@ -665,6 +866,7 @@ const openProject = async (file) => {
     if (S.items.length && !(await confirmDlg('Open this project?', `The ${plural(S.items.length, 'photo')} open now leave the batch. Save a project first if you want to keep them.`, 'Open'))) return;
     await removeItems([...S.items]);
     S.params = merge(defaultParams(), meta.params || {}); S.params.wb.pick = null; syncUI();
+    if (meta.maps) { S.mapKey = cleanKey(meta.maps.key); S.mapOpts = cleanMapOpts(meta.maps.opts); saveUI(); }
     const added = [];
     for (let k = 0; k < meta.items.length; k++) {
       const m = meta.items[k], get = zip.get(m.photo); if (!get) continue;
@@ -672,18 +874,23 @@ const openProject = async (file) => {
       try {
         const it = await makeItem(new Blob([await get()], { type: m.type || '' }), m.name);
         it.outName = m.outName || it.outName; it.wbPick = m.wbPick || null; it.wbPickMed = m.wbPickMed || null;
+        if (m.map && m.map.file && zip.get(m.map.file)) {
+          const mb = new Blob([await zip.get(m.map.file)()], { type: m.map.type || '' });
+          it.map = { blob: mb, name: m.map.name || 'map', type: m.map.type || '', colours: Array.isArray(m.map.colours) ? m.map.colours : [], mode: m.map.mode || '', unmarked: +m.map.unmarked || 0, edited: !!m.map.edited };
+        }
         if (m.parts && zip.get(m.parts)) {
           it.masksBlob = store.withPartsType(await zip.get(m.parts)(), m.partsType);
           it.split = { status: m.split?.status === 'error' ? 'error' : 'done', note: m.split?.note || 'Opened from a project.', people: m.split?.people || 0 };
           await analyseAtWork(it);
-        }
+        } else if (it.map) queueMap(it);
         S.items.push(it); added.push(it); buildItemEls(it); persist(it);
       } catch (e) { console.error(e); }
       await yieldToPage();
     }
     saveOrder(); updateBatchUI();
     await activate(added[Math.max(0, Math.min(added.length - 1, +meta.current || 0))]);
-    if (S.autoSplit) S.items.filter((i) => i.split.status === 'none').forEach((i) => queueSplit(i));
+    runMapQueue();
+    S.items.filter(needsSplit).forEach((i) => queueSplit(i));
     schedulePreviews(); rebuild('all');
     status(`Opened ${file.name}: ${plural(added.length, 'photo')}.`);
   } catch (e) { console.error(e); status('Couldn’t open the project: ' + (e.message || e), 'err'); }
@@ -799,8 +1006,30 @@ $('#btnSplit').addEventListener('click', () => { if (S.cur) queueSplit(S.cur, tr
 $('#chkAutoSplit').checked = S.autoSplit;
 $('#chkAutoSplit').addEventListener('change', (e) => {
   S.autoSplit = e.target.checked; saveUI();
-  if (S.autoSplit) S.items.filter((i) => i.split.status === 'none').forEach((i) => queueSplit(i));
+  if (S.autoSplit) S.items.filter(needsSplit).forEach((i) => queueSplit(i));
 });
+// parts maps: one file goes to the photo on screen; several, each to the photo it's named after
+$('#mapInput').addEventListener('change', (e) => {
+  const files = [...e.target.files].filter((f) => isImage(f, f.name)); e.target.value = '';
+  if (!files.length) return;
+  if (files.length === 1) { if (S.cur) attachMap(S.cur, files[0], files[0].name); return; }
+  const miss = []; let n = 0;
+  for (const f of files) {
+    const k = photoKeyOfMap(f.name) || photoKeyOf(f.name), it = S.items.find((i) => photoKeyOf(i.name) === k);
+    if (it) { attachMap(it, f, f.name, { run: false }); n++; } else miss.push(f.name);
+  }
+  if (n) runMapQueue();
+  if (miss.length) status(`${miss.join(', ')}: no photo in the batch has ${miss.length === 1 ? 'that name' : 'those names'}. Name a map after its photo (gloves-mask.png for gloves.jpg), or load it alone with that photo on screen.`, 'err');
+});
+$('#btnMapRemove').addEventListener('click', () => removeMap(S.cur));
+$('#btnMapApply').addEventListener('click', () => { const it = S.cur; if (!it || !it.map) return; it.mapRead = null; queueMap(it); runMapQueue(); });
+$$('#segUnmarked button').forEach((b) => b.addEventListener('click', () => {
+  if (S.mapOpts.unmarked === b.dataset.v) return;
+  S.mapOpts.unmarked = b.dataset.v; saveUI(); pressSeg($('#segUnmarked'), b.dataset.v);
+  reapplyMaps((it) => (it.map.unmarked ?? 1) > 0, (left) => `What isn’t painted ${b.dataset.v === 'auto' ? 'goes to the auto split' : 'is background'} on every map now. ${keptLine(left)}`.trim());
+  showMapUI();
+}));
+$('#chkMapSnap').addEventListener('change', (e) => { S.mapOpts.snap = e.target.checked; saveUI(); reapplyMaps(null, (left) => `${S.mapOpts.snap ? 'The maps’ edges snap to the photos’ now.' : 'The maps’ edges are as painted now.'} ${keptLine(left)}`.trim()); });
 
 // colour by part: the product first, the background last, with the background's own options in its Fine-tune
 const PART_ORDER = ['gear', 'kit', 'skin', 'place'];
@@ -973,7 +1202,7 @@ window.addEventListener('drop', async (e) => {
   const entries = [...(dt.items || [])].filter((i) => i.kind === 'file').map((i) => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null));
   const list = entries.length && entries.every(Boolean) ? await walkEntries(entries) : fromFiles(files);
   if (list.length) addPhotos(list);
-  else if (dt.getData('text/uri-list')) status('That picture came from a web page that doesn’t let other pages read it. Save it to your computer and drop the file, or use Send photos (in Samples).', 'err');
+  else if (dt.getData('text/uri-list')) status('That picture came from a web page that doesn’t let other pages read it. Save it to your computer and drop the file.', 'err');
 });
 const typing = (e) => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && !['range', 'checkbox', 'radio', 'color'].includes(e.target.type);
 window.addEventListener('paste', (e) => {
@@ -982,7 +1211,7 @@ window.addEventListener('paste', (e) => {
   if (files.length) addPhotos(files.map((f, k) => ({ blob: f, name: f.name && f.name !== 'image.png' ? f.name : `pasted-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}-${k + 1}.png` })));
 });
 
-// ---------- samples, and photos sent from a web page ----------
+// ---------- samples ----------
 let samples = null;
 const addSample = async (s) => { const blob = await (await fetch('../samples/' + s.file)).blob(); return { blob, name: s.file }; };
 const showSamples = async () => {
@@ -1004,20 +1233,7 @@ const showSamples = async () => {
 $('#btnSamples').addEventListener('click', showSamples);
 $('#btnSamples2').addEventListener('click', showSamples);
 $('#btnAllSamples').addEventListener('click', async () => { $('#samplesDlg').close(); const list = []; for (const s of samples || []) list.push(await addSample(s)); addPhotos(list); });
-const grabUrl = new URL('../shared/grab.js', location.href).href;
-$('#grabLink').href = `javascript:(()=>{const s=document.createElement('script');s.src='${grabUrl}?'+Date.now();document.documentElement.appendChild(s)})()`;
-$('#grabLink').addEventListener('click', (e) => { e.preventDefault(); status('Drag that button to your bookmarks bar, then click the bookmark on a page with photos.'); });
-// photos sent by the page that opened this one (the bookmark above): images only, kept in this browser
 let restored = Promise.resolve();
-window.addEventListener('message', async (e) => {
-  if (!window.opener || e.source !== window.opener) return;
-  const d = e.data; if (!d || d.type !== 'ea-tuner-photos' || !Array.isArray(d.photos)) return;
-  await restored;
-  const list = d.photos.filter((p) => p && p.blob instanceof Blob).slice(0, 200).map((p) => ({ blob: p.blob, name: String(p.name || 'photo').slice(0, 120) }));
-  const added = await addPhotos(list);
-  try { e.source.postMessage({ type: 'ea-tuner-received', count: added.length }, '*'); } catch (err) { /* the page has gone */ }
-  if (added.length && !S.autoSplit) status(`Added ${plural(added.length, 'photo')} from ${String(d.from || 'another page').slice(0, 80)}.`);
-});
 
 // ---------- the side panel's width ----------
 const app = $('#app'), splitter = $('#splitter');
@@ -1102,7 +1318,6 @@ const idbGet = (key) => new Promise((res) => {
 });
 
 // ---------- other tabs with the tool open share one batch ----------
-// (the bookmark can open a second tab while one is open already)
 const TAB = newId(), chan = 'BroadcastChannel' in self ? new BroadcastChannel('ea-tuner') : null;
 function announce() { try { if (chan) chan.postMessage({ type: 'changed', tab: TAB }); } catch (e) { /* no channel */ } }
 let syncing = false, syncAgain = false;
@@ -1120,7 +1335,7 @@ const syncFromStore = async () => {
       for (const it of S.items) { // changed elsewhere; the photo on screen here keeps its own edits
         const r = byId.get(it.id);
         if (!r || it === S.cur || (r.rev || 0) <= (it.rev || 0)) continue;
-        Object.assign(it, { masksBlob: r.masksBlob, analysis: r.analysis, analysisSize: r.analysisSize, split: { ...r.split }, outName: r.outName, wbPick: r.wbPick, wbPickMed: r.wbPickMed, rev: r.rev });
+        Object.assign(it, { masksBlob: r.masksBlob, autoBlob: r.autoBlob || null, map: r.map || null, mapRead: null, analysis: r.analysis, analysisSize: r.analysisSize, split: { ...r.split }, outName: r.outName, wbPick: r.wbPick, wbPickMed: r.wbPickMed, rev: r.rev });
         it.maskVersion++; it.smallMasks = null; it.overlaySmall = null; updateBadge(it); changed = true;
       }
       for (const r of recs) if (!S.items.some((i) => i.id === r.id)) { const it = itemFromRecord(r); S.items.push(it); buildItemEls(it); changed = true; }
@@ -1150,7 +1365,8 @@ const restoreBatch = async () => {
   updateBatchUI();
   const curId = await store.getMeta('current').catch(() => null);
   await activate(S.items.find((i) => i.id === curId) || S.items[0]);
-  if (S.autoSplit) S.items.filter((i) => i.split.status === 'none').forEach((i) => queueSplit(i));
+  S.items.filter((i) => i.map && !i.masksBlob).forEach(queueMap); runMapQueue(); // maps not applied before the page closed
+  S.items.filter(needsSplit).forEach((i) => queueSplit(i));
   schedulePreviews();
   if (!S.queueRunning) status(`Your batch from last time: ${plural(S.items.length, 'photo')}.`);
 };
@@ -1164,5 +1380,4 @@ restored = restoreBatch().catch((e) => console.error(e));
 restored.then(async () => {
   if (location.hash.startsWith('#handoff')) { const h = await idbGet('tuner'); if (h && h.blob) addPhotos([{ blob: h.blob, name: h.name || 'generated.png' }], { gearMask: h.gearMask || null }); }
 });
-if (window.opener) { try { window.opener.postMessage({ type: 'ea-tuner-ready' }, '*'); } catch (e) { /* no opener */ } }
-window.__tuner = { S, editor, gl, rebuild, addPhotos, activate, removeItems, exportCurrent, exportAll, renderFull, setDisplay, setShow, setTool, setPart, saveProject, openProject, queueSplit, runPreviews: () => runPreviews(), restored: () => restored, store };
+window.__tuner = { S, editor, gl, rebuild, addPhotos, activate, removeItems, exportCurrent, exportAll, renderFull, setDisplay, setShow, setTool, setPart, saveProject, openProject, queueSplit, runPreviews: () => runPreviews(), restored: () => restored, store, attachMap, removeMap, runMapQueue, reapplyMaps, showMapUI };
